@@ -14,6 +14,8 @@ typedef struct AppConfig {
     DWORD trim_interval_ms;
     DWORD background_grace_ms;
     DWORD manual_resume_grace_ms;
+    DWORD heartbeat_interval_ms;
+    DWORD window_probe_timeout_ms;
     SuspendPolicy suspend_policy;
     bool trim_working_set;
     bool lower_memory_priority;

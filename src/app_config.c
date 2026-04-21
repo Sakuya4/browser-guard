@@ -20,6 +20,8 @@ void init_app_config(AppConfig *config) {
     config->trim_interval_ms = 5000;
     config->background_grace_ms = 1500;
     config->manual_resume_grace_ms = 5000;
+    config->heartbeat_interval_ms = 5000;
+    config->window_probe_timeout_ms = 750;
     config->suspend_policy = SUSPEND_POLICY_MINIMIZED_ONLY;
     config->trim_working_set = false;
     config->lower_memory_priority = false;
@@ -34,6 +36,8 @@ void print_usage(const char *program_name) {
     fprintf(stderr, "  --trim-interval-ms N      Re-trim suspended browsers every N ms (1000-60000)\n");
     fprintf(stderr, "  --background-grace-ms N   Wait this long before suspending a background browser (250-60000)\n");
     fprintf(stderr, "  --manual-resume-grace-ms N Keep a manually resumed browser awake for this long (500-60000)\n");
+    fprintf(stderr, "  --heartbeat-interval-ms N  Probe suspended browsers every N ms (1000-60000)\n");
+    fprintf(stderr, "  --window-probe-timeout-ms N  Window ping timeout during heartbeat (100-5000)\n");
     fprintf(stderr, "  --aggressive-suspend      Suspend all background browsers, including visible ones\n");
     fprintf(stderr, "  --minimized-only          Only suspend minimized browsers (default)\n");
     fprintf(stderr, "  --lower-memory-priority   Lower browser memory priority while suspended\n");
@@ -104,6 +108,20 @@ bool parse_app_config(AppConfig *config, int argc, char **argv) {
 
         if (strcmp(argv[i], "--manual-resume-grace-ms") == 0) {
             if (i + 1 >= argc || !parse_dword_arg(argv[++i], 500, 60000, &config->manual_resume_grace_ms)) {
+                return false;
+            }
+            continue;
+        }
+
+        if (strcmp(argv[i], "--heartbeat-interval-ms") == 0) {
+            if (i + 1 >= argc || !parse_dword_arg(argv[++i], 1000, 60000, &config->heartbeat_interval_ms)) {
+                return false;
+            }
+            continue;
+        }
+
+        if (strcmp(argv[i], "--window-probe-timeout-ms") == 0) {
+            if (i + 1 >= argc || !parse_dword_arg(argv[++i], 100, 5000, &config->window_probe_timeout_ms)) {
                 return false;
             }
             continue;

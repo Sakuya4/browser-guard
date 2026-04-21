@@ -39,6 +39,8 @@ void collect_browser_groups(const SecurityContext *context, BrowserGroup *groups
 void mark_foreground_groups(BrowserGroup *groups, size_t group_count);
 void mark_audio_groups(BrowserGroup *groups, size_t group_count);
 bool is_manageable_browser_pid(const SecurityContext *context, DWORD pid);
+HWND find_browser_window_for_pid(DWORD pid);
+bool probe_browser_window(HWND hwnd, DWORD timeout_ms);
 bool set_process_background_mode(DWORD pid, const AppConfig *config);
 bool restore_process_foreground_mode(DWORD pid, const AppConfig *config);
 bool set_process_suspended(DWORD pid, bool suspend, const AppConfig *config);

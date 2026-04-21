@@ -40,6 +40,11 @@ typedef struct WindowScanContext {
     HWND foreground_window;
 } WindowScanContext;
 
+typedef struct WindowFindContext {
+    DWORD pid;
+    HWND window;
+} WindowFindContext;
+
 static bool is_supported_browser_name(const wchar_t *exe_name) {
     for (size_t i = 0; i < sizeof(k_supported_browsers) / sizeof(k_supported_browsers[0]); ++i) {
         if (_wcsicmp(exe_name, k_supported_browsers[i]) == 0) {
@@ -322,6 +327,54 @@ void mark_foreground_groups(BrowserGroup *groups, size_t group_count) {
     };
 
     EnumWindows(enum_windows_callback, (LPARAM)&context);
+}
+
+static BOOL CALLBACK find_window_by_pid_callback(HWND hwnd, LPARAM lparam) {
+    WindowFindContext *context = (WindowFindContext *)lparam;
+    DWORD pid = 0;
+
+    if (!IsWindow(hwnd)) {
+        return TRUE;
+    }
+
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid != context->pid) {
+        return TRUE;
+    }
+
+    if (GetAncestor(hwnd, GA_ROOT) != hwnd) {
+        return TRUE;
+    }
+
+    context->window = hwnd;
+    return FALSE;
+}
+
+HWND find_browser_window_for_pid(DWORD pid) {
+    WindowFindContext context;
+
+    ZeroMemory(&context, sizeof(context));
+    context.pid = pid;
+    EnumWindows(find_window_by_pid_callback, (LPARAM)&context);
+    return context.window;
+}
+
+bool probe_browser_window(HWND hwnd, DWORD timeout_ms) {
+    DWORD_PTR result = 0;
+
+    if (hwnd == NULL || !IsWindow(hwnd)) {
+        return false;
+    }
+
+    return SendMessageTimeoutW(
+        hwnd,
+        WM_NULL,
+        0,
+        0,
+        SMTO_ABORTIFHUNG | SMTO_BLOCK,
+        timeout_ms,
+        &result
+    ) != 0;
 }
 
 static void collect_active_audio_pids(DWORD *audio_pids, size_t *audio_pid_count, size_t capacity) {

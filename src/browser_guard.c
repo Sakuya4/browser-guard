@@ -12,12 +12,15 @@
 typedef struct TrackedProcess {
     DWORD pid;
     wchar_t exe_name[MAX_PATH];
+    HWND last_known_window;
     bool suspended;
     bool background_mode;
+    bool suspend_disabled;
     bool seen_this_pass;
     DWORD last_trim_tick;
     DWORD last_active_tick;
     DWORD manual_resume_until_tick;
+    DWORD last_heartbeat_tick;
 } TrackedProcess;
 
 static volatile BOOL g_should_stop = FALSE;
@@ -321,6 +324,50 @@ static void cleanup_tracked_processes(TrackedProcess *tracked, size_t *tracked_c
     *tracked_count = write_index;
 }
 
+static void run_suspend_heartbeat(
+    TrackedProcess *entry,
+    const AppConfig *config,
+    DWORD now_tick
+) {
+    HWND probe_window = entry->last_known_window;
+    bool probe_ok = false;
+
+    if (!entry->suspended || !tick_deadline_reached(now_tick, entry->last_heartbeat_tick + config->heartbeat_interval_ms)) {
+        return;
+    }
+
+    entry->last_heartbeat_tick = now_tick;
+
+    if (!set_process_suspended(entry->pid, false, config)) {
+        entry->suspended = false;
+        entry->suspend_disabled = true;
+        entry->manual_resume_until_tick = now_tick + config->manual_resume_grace_ms;
+        entry->last_active_tick = now_tick;
+        return;
+    }
+
+    if (probe_window == NULL || !IsWindow(probe_window)) {
+        probe_window = find_browser_window_for_pid(entry->pid);
+        entry->last_known_window = probe_window;
+    }
+
+    probe_ok = probe_browser_window(probe_window, config->window_probe_timeout_ms);
+    if (!probe_ok) {
+        entry->suspended = false;
+        entry->suspend_disabled = true;
+        entry->manual_resume_until_tick = now_tick + config->manual_resume_grace_ms;
+        entry->last_active_tick = now_tick;
+        return;
+    }
+
+    if (!set_process_suspended(entry->pid, true, config)) {
+        entry->suspended = false;
+        entry->suspend_disabled = true;
+        entry->manual_resume_until_tick = now_tick + config->manual_resume_grace_ms;
+        entry->last_active_tick = now_tick;
+    }
+}
+
 static unsigned int count_suspended_processes(const TrackedProcess *tracked, size_t tracked_count) {
     unsigned int suspended_count = 0;
 
@@ -394,17 +441,23 @@ static void ensure_group_state(
             ZeroMemory(entry, sizeof(*entry));
             entry->pid = pid;
             wcsncpy(entry->exe_name, group->exe_name, MAX_PATH - 1);
+            entry->last_known_window = group->anchor_window;
             entry->last_active_tick = now_tick;
             entry->manual_resume_until_tick = now_tick;
+            entry->last_heartbeat_tick = now_tick;
             *tracked_count += 1;
         }
 
         entry->seen_this_pass = true;
+        if (group->anchor_window != NULL) {
+            entry->last_known_window = group->anchor_window;
+        }
         if (group_is_active) {
             entry->last_active_tick = now_tick;
         }
 
         if (!group_is_active &&
+            !entry->suspend_disabled &&
             (config->suspend_policy == SUSPEND_POLICY_ALL_BACKGROUND || group->is_minimized) &&
             tick_deadline_reached(now_tick, entry->manual_resume_until_tick) &&
             tick_deadline_reached(now_tick, entry->last_active_tick + config->background_grace_ms)) {
@@ -446,6 +499,7 @@ static void ensure_group_state(
 
             entry->suspended = should_suspend;
             entry->last_trim_tick = now_tick;
+            entry->last_heartbeat_tick = now_tick;
             if (!should_suspend) {
                 entry->last_active_tick = now_tick;
             }
@@ -459,6 +513,8 @@ static void ensure_group_state(
             }
             continue;
         }
+
+        run_suspend_heartbeat(entry, config, now_tick);
 
         if (should_suspend &&
             config->trim_working_set &&

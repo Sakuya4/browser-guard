@@ -41,6 +41,7 @@ The codebase is split so each layer has a narrow job:
 - [src/main.c](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\src\main.c): CLI entry point
 - [src/app_config.c](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\src\app_config.c): argument parsing and defaults
 - [src/browser_guard.c](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\src\browser_guard.c): orchestration loop and lifecycle tracking
+- [src/control_main.c](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\src\control_main.c): native desktop toggle and startup launcher
 - [src/process_control.c](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\src\process_control.c): process discovery, ownership checks, audio detection, suspension, and memory policy
 
 Public headers live under [include](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\include).
@@ -75,6 +76,11 @@ cmake -S . -B build
 cmake --build build --config Release
 ```
 
+This produces both:
+
+- `build\Release\browser_guard.exe`
+- `build\Release\browser_guard_control.exe`
+
 ### MinGW
 
 ```powershell
@@ -89,6 +95,8 @@ Minimal run:
 ```powershell
 .\build\Release\browser_guard.exe
 ```
+
+On Windows, `browser_guard.exe` now starts as a background GUI process, so double-clicking it does not open a console window.
 
 Recommended aggressive mode:
 
@@ -119,6 +127,13 @@ powershell -ExecutionPolicy Bypass -File .\tools\install-startup.ps1
 ```
 
 This copies `browser_guard.exe` into `%LOCALAPPDATA%\browser_guard` and creates a shortcut in the Windows Startup folder so it launches at sign-in.
+
+The installer also copies `browser_guard_control.exe` into the same directory and creates a desktop shortcut named `browser_guard Toggle`. That shortcut is a native Windows controller:
+
+- click it once to turn `browser_guard` off
+- click it again later to turn `browser_guard` back on
+- each toggle shows a small native confirmation popup near the bottom-right corner
+- startup launches now go through `browser_guard_control.exe --launch`, which respects the disabled flag and avoids re-enabling the guard after you intentionally turned it off
 
 To remove that installation:
 

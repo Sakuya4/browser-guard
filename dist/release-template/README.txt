@@ -18,6 +18,7 @@ Quick start:
 Behavior:
 - browser_guard.exe runs in the background and does not open a console window.
 - Toggling browser_guard on or off shows a small native confirmation popup near the bottom-right corner.
+- Background suspension waits about one minute by default before it triggers.
 - When a supported browser is paused, a small overlay appears in the top-left corner.
 - Click that overlay or click the paused browser window to resume it.
 

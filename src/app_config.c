@@ -18,7 +18,7 @@ static bool parse_dword_arg(const char *value, DWORD min_value, DWORD max_value,
 void init_app_config(AppConfig *config) {
     config->interval_ms = 1000;
     config->trim_interval_ms = 5000;
-    config->background_grace_ms = 1500;
+    config->background_grace_ms = 60000;
     config->manual_resume_grace_ms = 5000;
     config->heartbeat_interval_ms = 5000;
     config->window_probe_timeout_ms = 750;
@@ -34,7 +34,7 @@ void print_usage(const char *program_name) {
     fprintf(stderr, "  --interval-ms N           Polling interval in milliseconds (100-60000)\n");
     fprintf(stderr, "  --trim-working-set        Trim browser working sets after suspension\n");
     fprintf(stderr, "  --trim-interval-ms N      Re-trim suspended browsers every N ms (1000-60000)\n");
-    fprintf(stderr, "  --background-grace-ms N   Wait this long before suspending a background browser (250-60000)\n");
+    fprintf(stderr, "  --background-grace-ms N   Wait this long before suspending a background browser (250-60000, default 60000)\n");
     fprintf(stderr, "  --manual-resume-grace-ms N Keep a manually resumed browser awake for this long (500-60000)\n");
     fprintf(stderr, "  --heartbeat-interval-ms N  Probe suspended browsers every N ms (1000-60000)\n");
     fprintf(stderr, "  --window-probe-timeout-ms N  Window ping timeout during heartbeat (100-5000)\n");

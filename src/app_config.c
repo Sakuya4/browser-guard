@@ -18,6 +18,9 @@ static bool parse_dword_arg(const char *value, DWORD min_value, DWORD max_value,
 void init_app_config(AppConfig *config) {
     config->interval_ms = 1000;
     config->trim_interval_ms = 5000;
+    config->background_grace_ms = 1500;
+    config->manual_resume_grace_ms = 5000;
+    config->suspend_policy = SUSPEND_POLICY_MINIMIZED_ONLY;
     config->trim_working_set = false;
     config->lower_memory_priority = false;
     config->enable_power_throttling = false;
@@ -29,6 +32,10 @@ void print_usage(const char *program_name) {
     fprintf(stderr, "  --interval-ms N           Polling interval in milliseconds (100-60000)\n");
     fprintf(stderr, "  --trim-working-set        Trim browser working sets after suspension\n");
     fprintf(stderr, "  --trim-interval-ms N      Re-trim suspended browsers every N ms (1000-60000)\n");
+    fprintf(stderr, "  --background-grace-ms N   Wait this long before suspending a background browser (250-60000)\n");
+    fprintf(stderr, "  --manual-resume-grace-ms N Keep a manually resumed browser awake for this long (500-60000)\n");
+    fprintf(stderr, "  --aggressive-suspend      Suspend all background browsers, including visible ones\n");
+    fprintf(stderr, "  --minimized-only          Only suspend minimized browsers (default)\n");
     fprintf(stderr, "  --lower-memory-priority   Lower browser memory priority while suspended\n");
     fprintf(stderr, "  --eco-qos                 Enable Windows power throttling while suspended\n");
     fprintf(stderr, "  --aggressive-memory       Enable trim, low memory priority, and EcoQoS together\n");
@@ -64,6 +71,16 @@ bool parse_app_config(AppConfig *config, int argc, char **argv) {
             continue;
         }
 
+        if (strcmp(argv[i], "--aggressive-suspend") == 0) {
+            config->suspend_policy = SUSPEND_POLICY_ALL_BACKGROUND;
+            continue;
+        }
+
+        if (strcmp(argv[i], "--minimized-only") == 0) {
+            config->suspend_policy = SUSPEND_POLICY_MINIMIZED_ONLY;
+            continue;
+        }
+
         if (strcmp(argv[i], "--interval-ms") == 0) {
             if (i + 1 >= argc || !parse_dword_arg(argv[++i], 100, 60000, &config->interval_ms)) {
                 return false;
@@ -73,6 +90,20 @@ bool parse_app_config(AppConfig *config, int argc, char **argv) {
 
         if (strcmp(argv[i], "--trim-interval-ms") == 0) {
             if (i + 1 >= argc || !parse_dword_arg(argv[++i], 1000, 60000, &config->trim_interval_ms)) {
+                return false;
+            }
+            continue;
+        }
+
+        if (strcmp(argv[i], "--background-grace-ms") == 0) {
+            if (i + 1 >= argc || !parse_dword_arg(argv[++i], 250, 60000, &config->background_grace_ms)) {
+                return false;
+            }
+            continue;
+        }
+
+        if (strcmp(argv[i], "--manual-resume-grace-ms") == 0) {
+            if (i + 1 >= argc || !parse_dword_arg(argv[++i], 500, 60000, &config->manual_resume_grace_ms)) {
                 return false;
             }
             continue;

@@ -13,15 +13,18 @@ typedef struct TrackedProcess {
     DWORD pid;
     wchar_t exe_name[MAX_PATH];
     bool suspended;
+    bool background_mode;
     bool seen_this_pass;
     DWORD last_trim_tick;
+    DWORD last_active_tick;
+    DWORD manual_resume_until_tick;
 } TrackedProcess;
 
 static volatile BOOL g_should_stop = FALSE;
 static volatile BOOL g_resume_requested = FALSE;
 static HWND g_overlay_window = NULL;
 static HWND g_resume_target_window = NULL;
-static HWND g_overlay_owner_window = NULL;
+static HWND g_overlay_target_window = NULL;
 
 typedef struct OverlayState {
     bool visible;
@@ -56,7 +59,7 @@ static LRESULT CALLBACK overlay_window_proc(HWND hwnd, UINT message, WPARAM wpar
             GetClientRect(hwnd, &rect);
             DrawTextW(
                 dc,
-                L"Browser paused.\nClick here or click the browser to resume.",
+                L"Browser paused.\nClick here or the browser to resume.\nHotkey: Ctrl+Alt+B",
                 -1,
                 &rect,
                 DT_LEFT | DT_VCENTER | DT_WORDBREAK
@@ -86,6 +89,10 @@ static TrackedProcess *find_tracked_process(TrackedProcess *tracked, size_t trac
     }
 
     return NULL;
+}
+
+static bool tick_deadline_reached(DWORD now_tick, DWORD deadline_tick) {
+    return (LONG)(now_tick - deadline_tick) >= 0;
 }
 
 static bool register_overlay_window_class(void) {
@@ -133,23 +140,28 @@ static void destroy_overlay_window(void) {
 
 static void update_overlay_window(const OverlayState *state) {
     RECT target_rect;
+    HWND resolved_target = state->target_window;
 
     if (g_overlay_window == NULL) {
         return;
     }
 
+    if (resolved_target == NULL || !IsWindow(resolved_target) || IsIconic(resolved_target)) {
+        resolved_target = g_overlay_target_window;
+    }
+
     if (state->visible &&
-        state->target_window != NULL &&
-        IsWindow(state->target_window) &&
-        !IsIconic(state->target_window) &&
-        GetWindowRect(state->target_window, &target_rect)) {
+        resolved_target != NULL &&
+        IsWindow(resolved_target) &&
+        !IsIconic(resolved_target) &&
+        GetWindowRect(resolved_target, &target_rect)) {
         int x = target_rect.left + 8;
         int y = target_rect.top + 8;
 
-        g_overlay_owner_window = state->target_window;
+        g_overlay_target_window = resolved_target;
         SetWindowPos(
             g_overlay_window,
-            g_overlay_owner_window,
+            HWND_TOPMOST,
             x,
             y,
             BG_OVERLAY_WIDTH,
@@ -161,7 +173,7 @@ static void update_overlay_window(const OverlayState *state) {
         UpdateWindow(g_overlay_window);
     } else {
         ShowWindow(g_overlay_window, SW_HIDE);
-        g_overlay_owner_window = NULL;
+        g_overlay_target_window = NULL;
     }
 }
 
@@ -230,6 +242,7 @@ static void pump_ui_messages(
 ) {
     DWORD elapsed = 0;
     const DWORD slice_ms = 50;
+    static SHORT previous_hotkey_state = 0;
 
     while (!g_should_stop && elapsed < interval_ms) {
         MSG message;
@@ -238,6 +251,17 @@ static void pump_ui_messages(
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
+
+        SHORT hotkey_state = GetAsyncKeyState('B');
+        if ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0 &&
+            (GetAsyncKeyState(VK_MENU) & 0x8000) != 0 &&
+            (hotkey_state & 0x8000) != 0 &&
+            (previous_hotkey_state & 0x8000) == 0) {
+            g_resume_requested = TRUE;
+            previous_hotkey_state = hotkey_state;
+            return;
+        }
+        previous_hotkey_state = hotkey_state;
 
         HWND target_browser_window = NULL;
         if (clicked_suspended_browser_window(security_context, tracked, tracked_count, &target_browser_window)) {
@@ -257,6 +281,22 @@ static void resume_all_tracked(TrackedProcess *tracked, size_t tracked_count, co
             set_process_suspended(tracked[i].pid, false, config);
             tracked[i].suspended = false;
         }
+        if (tracked[i].background_mode) {
+            restore_process_foreground_mode(tracked[i].pid, config);
+            tracked[i].background_mode = false;
+        }
+    }
+}
+
+static void hold_resumed_processes(
+    TrackedProcess *tracked,
+    size_t tracked_count,
+    DWORD now_tick,
+    DWORD hold_duration_ms
+) {
+    for (size_t i = 0; i < tracked_count; ++i) {
+        tracked[i].manual_resume_until_tick = now_tick + hold_duration_ms;
+        tracked[i].last_active_tick = now_tick;
     }
 }
 
@@ -267,6 +307,9 @@ static void cleanup_tracked_processes(TrackedProcess *tracked, size_t *tracked_c
         if (!tracked[i].seen_this_pass) {
             if (tracked[i].suspended) {
                 set_process_suspended(tracked[i].pid, false, config);
+            }
+            if (tracked[i].background_mode) {
+                restore_process_foreground_mode(tracked[i].pid, config);
             }
             continue;
         }
@@ -334,11 +377,13 @@ static void ensure_group_state(
     const AppConfig *config,
     DWORD now_tick
 ) {
-    bool should_suspend = !group->has_foreground_window && !group->has_audio;
+    bool group_is_active = group->has_foreground_window || group->has_audio;
+    bool should_use_background_mode = !group_is_active && group->has_visible_window && !group->is_minimized;
 
     for (size_t i = 0; i < group->pid_count; ++i) {
         DWORD pid = group->pids[i];
         TrackedProcess *entry = find_tracked_process(tracked, *tracked_count, pid);
+        bool should_suspend = false;
 
         if (entry == NULL) {
             if (*tracked_count >= tracked_capacity) {
@@ -349,10 +394,47 @@ static void ensure_group_state(
             ZeroMemory(entry, sizeof(*entry));
             entry->pid = pid;
             wcsncpy(entry->exe_name, group->exe_name, MAX_PATH - 1);
+            entry->last_active_tick = now_tick;
+            entry->manual_resume_until_tick = now_tick;
             *tracked_count += 1;
         }
 
         entry->seen_this_pass = true;
+        if (group_is_active) {
+            entry->last_active_tick = now_tick;
+        }
+
+        if (!group_is_active &&
+            (config->suspend_policy == SUSPEND_POLICY_ALL_BACKGROUND || group->is_minimized) &&
+            tick_deadline_reached(now_tick, entry->manual_resume_until_tick) &&
+            tick_deadline_reached(now_tick, entry->last_active_tick + config->background_grace_ms)) {
+            should_suspend = true;
+        }
+
+        if (entry->background_mode != should_use_background_mode) {
+            bool mode_ok = should_use_background_mode
+                ? set_process_background_mode(pid, config)
+                : restore_process_foreground_mode(pid, config);
+            if (mode_ok) {
+                entry->background_mode = should_use_background_mode;
+                if (config->verbose) {
+                    fwprintf(
+                        stdout,
+                        should_use_background_mode ? L"[background] pid=%lu (%ls)\n" : L"[foreground] pid=%lu (%ls)\n",
+                        pid,
+                        group->exe_name
+                    );
+                }
+            }
+        } else if (should_use_background_mode &&
+                   config->trim_working_set &&
+                   now_tick - entry->last_trim_tick >= config->trim_interval_ms) {
+            set_process_background_mode(pid, config);
+            entry->last_trim_tick = now_tick;
+            if (config->verbose) {
+                fwprintf(stdout, L"[background-trim] pid=%lu (%ls)\n", pid, group->exe_name);
+            }
+        }
 
         if (entry->suspended != should_suspend) {
             if (!set_process_suspended(pid, should_suspend, config)) {
@@ -364,6 +446,9 @@ static void ensure_group_state(
 
             entry->suspended = should_suspend;
             entry->last_trim_tick = now_tick;
+            if (!should_suspend) {
+                entry->last_active_tick = now_tick;
+            }
             if (config->verbose) {
                 fwprintf(
                     stdout,
@@ -426,6 +511,7 @@ int run_browser_guard(const AppConfig *config) {
 
         if (g_resume_requested) {
             resume_all_tracked(tracked, tracked_count, config);
+            hold_resumed_processes(tracked, tracked_count, now_tick, config->manual_resume_grace_ms);
             if (g_resume_target_window != NULL) {
                 ShowWindow(g_resume_target_window, SW_RESTORE);
                 SetForegroundWindow(g_resume_target_window);

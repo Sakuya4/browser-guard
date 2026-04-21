@@ -296,13 +296,19 @@ static BOOL CALLBACK enum_windows_callback(HWND hwnd, LPARAM lparam) {
         return TRUE;
     }
 
+    group->has_visible_window = true;
     if (group->anchor_window == NULL && !IsIconic(hwnd)) {
         group->anchor_window = GetAncestor(hwnd, GA_ROOT);
+    }
+
+    if (IsIconic(hwnd)) {
+        group->is_minimized = true;
     }
 
     if (hwnd == context->foreground_window && !IsIconic(hwnd)) {
         group->has_foreground_window = true;
         group->anchor_window = GetAncestor(hwnd, GA_ROOT);
+        group->is_minimized = false;
     }
 
     return TRUE;
@@ -461,6 +467,46 @@ static bool invoke_suspend_or_resume(HANDLE process, bool suspend) {
 
     NTSTATUS status = suspend ? nt_suspend(process) : nt_resume(process);
     return status >= 0;
+}
+
+bool set_process_background_mode(DWORD pid, const AppConfig *config) {
+    HANDLE process = NULL;
+    bool needs_quota = config->trim_working_set;
+
+    if (!open_process_for_management(pid, needs_quota, &process)) {
+        return false;
+    }
+
+    if (config->lower_memory_priority) {
+        apply_memory_priority(process, true);
+    }
+    if (config->enable_power_throttling) {
+        apply_power_throttling(process, true);
+    }
+    if (config->trim_working_set) {
+        EmptyWorkingSet(process);
+    }
+
+    CloseHandle(process);
+    return true;
+}
+
+bool restore_process_foreground_mode(DWORD pid, const AppConfig *config) {
+    HANDLE process = NULL;
+
+    if (!open_process_for_management(pid, false, &process)) {
+        return false;
+    }
+
+    if (config->lower_memory_priority) {
+        apply_memory_priority(process, false);
+    }
+    if (config->enable_power_throttling) {
+        apply_power_throttling(process, false);
+    }
+
+    CloseHandle(process);
+    return true;
 }
 
 bool set_process_suspended(DWORD pid, bool suspend, const AppConfig *config) {

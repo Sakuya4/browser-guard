@@ -10,6 +10,8 @@
 - Suspends background browsers with `NtSuspendProcess`.
 - Shows a top-left reminder while a browser is suspended.
 - Lets you click the reminder or click the suspended browser window to wake it back up.
+- Waits briefly before suspending a newly backgrounded browser so normal app switching does not feel sticky.
+- Keeps a manually resumed browser awake for a short grace period to avoid immediate re-locks.
 - Optionally trims working sets after suspension and re-trims them on a fixed interval.
 - Optionally lowers memory priority and enables Windows power throttling while the browser is suspended.
 - Restores suspended browsers automatically when they return to the foreground or when the tool exits.
@@ -101,6 +103,8 @@ Available options:
 - `--interval-ms N`: main polling interval, default `1000`
 - `--trim-working-set`: trim browser working sets after suspension
 - `--trim-interval-ms N`: re-trim suspended browsers every `N` milliseconds
+- `--background-grace-ms N`: wait this long before suspending a background browser
+- `--manual-resume-grace-ms N`: keep a manually resumed browser awake for this long
 - `--lower-memory-priority`: lower process memory priority while suspended
 - `--eco-qos`: apply Windows power throttling while suspended
 - `--aggressive-memory`: shortcut for trim + low memory priority + power throttling

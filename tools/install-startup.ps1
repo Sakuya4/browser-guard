@@ -1,7 +1,7 @@
 param(
     [string]$ExecutablePath = "",
     [string]$InstallDirectory = "$env:LOCALAPPDATA\browser_guard",
-    [string]$Arguments = "--aggressive-memory --trim-interval-ms 3000",
+    [string]$Arguments = "--aggressive-memory --aggressive-suspend --trim-interval-ms 3000 --background-grace-ms 2500 --manual-resume-grace-ms 8000",
     [switch]$Overwrite
 )
 

@@ -4,9 +4,17 @@
 #include <stdbool.h>
 #include <windows.h>
 
+typedef enum SuspendPolicy {
+    SUSPEND_POLICY_MINIMIZED_ONLY = 0,
+    SUSPEND_POLICY_ALL_BACKGROUND = 1
+} SuspendPolicy;
+
 typedef struct AppConfig {
     DWORD interval_ms;
     DWORD trim_interval_ms;
+    DWORD background_grace_ms;
+    DWORD manual_resume_grace_ms;
+    SuspendPolicy suspend_policy;
     bool trim_working_set;
     bool lower_memory_priority;
     bool enable_power_throttling;

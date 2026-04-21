@@ -1,0 +1,10 @@
+/build/
+/*.user
+/*.suo
+/*.vcxproj*
+/*.dir/
+*.obj
+*.pdb
+*.ilk
+*.exe
+*.log

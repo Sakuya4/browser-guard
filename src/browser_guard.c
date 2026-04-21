@@ -21,10 +21,12 @@ static volatile BOOL g_should_stop = FALSE;
 static volatile BOOL g_resume_requested = FALSE;
 static HWND g_overlay_window = NULL;
 static HWND g_resume_target_window = NULL;
+static HWND g_overlay_owner_window = NULL;
 
 typedef struct OverlayState {
     bool visible;
     unsigned int suspended_count;
+    HWND target_window;
 } OverlayState;
 
 static LRESULT CALLBACK overlay_window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -130,16 +132,36 @@ static void destroy_overlay_window(void) {
 }
 
 static void update_overlay_window(const OverlayState *state) {
+    RECT target_rect;
+
     if (g_overlay_window == NULL) {
         return;
     }
 
-    if (state->visible) {
+    if (state->visible &&
+        state->target_window != NULL &&
+        IsWindow(state->target_window) &&
+        !IsIconic(state->target_window) &&
+        GetWindowRect(state->target_window, &target_rect)) {
+        int x = target_rect.left + 8;
+        int y = target_rect.top + 8;
+
+        g_overlay_owner_window = state->target_window;
+        SetWindowPos(
+            g_overlay_window,
+            g_overlay_owner_window,
+            x,
+            y,
+            BG_OVERLAY_WIDTH,
+            BG_OVERLAY_HEIGHT,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW
+        );
         ShowWindow(g_overlay_window, SW_SHOWNOACTIVATE);
         InvalidateRect(g_overlay_window, NULL, TRUE);
         UpdateWindow(g_overlay_window);
     } else {
         ShowWindow(g_overlay_window, SW_HIDE);
+        g_overlay_owner_window = NULL;
     }
 }
 
@@ -266,6 +288,27 @@ static unsigned int count_suspended_processes(const TrackedProcess *tracked, siz
     }
 
     return suspended_count;
+}
+
+static HWND choose_overlay_target_window(
+    const BrowserGroup *groups,
+    size_t group_count,
+    const TrackedProcess *tracked,
+    size_t tracked_count
+) {
+    for (size_t i = 0; i < group_count; ++i) {
+        if (groups[i].anchor_window == NULL) {
+            continue;
+        }
+
+        for (size_t j = 0; j < groups[i].pid_count; ++j) {
+            if (is_pid_suspended(tracked, tracked_count, groups[i].pids[j])) {
+                return groups[i].anchor_window;
+            }
+        }
+    }
+
+    return NULL;
 }
 
 static void log_memory_totals(const BrowserGroup *groups, size_t group_count) {
@@ -406,7 +449,8 @@ int run_browser_guard(const AppConfig *config) {
 
         cleanup_tracked_processes(tracked, &tracked_count, config);
         overlay_state.suspended_count = count_suspended_processes(tracked, tracked_count);
-        overlay_state.visible = overlay_state.suspended_count > 0;
+        overlay_state.target_window = choose_overlay_target_window(groups, group_count, tracked, tracked_count);
+        overlay_state.visible = overlay_state.suspended_count > 0 && overlay_state.target_window != NULL;
         update_overlay_window(&overlay_state);
         pump_ui_messages(&security_context, tracked, tracked_count, config->interval_ms);
     }

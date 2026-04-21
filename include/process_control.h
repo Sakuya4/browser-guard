@@ -15,6 +15,7 @@ typedef struct BrowserGroup {
     wchar_t exe_name[MAX_PATH];
     DWORD pids[BG_MAX_GROUP_PIDS];
     size_t pid_count;
+    HWND anchor_window;
     bool has_foreground_window;
     bool has_audio;
 } BrowserGroup;

@@ -1,16 +1,43 @@
 param(
-    [string]$ExecutablePath = ".\build\Release\browser_guard.exe",
+    [string]$ExecutablePath = "",
     [string]$InstallDirectory = "$env:LOCALAPPDATA\browser_guard",
     [string]$Arguments = "--aggressive-memory --trim-interval-ms 3000",
     [switch]$Overwrite
 )
 
 $ErrorActionPreference = "Stop"
-$repoRoot = Split-Path -Parent $PSScriptRoot
-$exeFullPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $ExecutablePath))
+function Resolve-BrowserGuardExecutable {
+    param(
+        [string]$ScriptRoot,
+        [string]$ExecutablePath
+    )
 
-if (-not (Test-Path $exeFullPath)) {
-    throw "Executable not found at $exeFullPath"
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($ExecutablePath)) {
+        if ([System.IO.Path]::IsPathRooted($ExecutablePath)) {
+            $candidates += $ExecutablePath
+        } else {
+            $candidates += (Join-Path $ScriptRoot $ExecutablePath)
+            $candidates += (Join-Path (Split-Path -Parent $ScriptRoot) $ExecutablePath)
+        }
+    }
+
+    $candidates += (Join-Path $ScriptRoot "browser_guard.exe")
+    $candidates += (Join-Path (Split-Path -Parent $ScriptRoot) "build\Release\browser_guard.exe")
+
+    foreach ($candidate in $candidates) {
+        $fullPath = [System.IO.Path]::GetFullPath($candidate)
+        if (Test-Path $fullPath) {
+            return $fullPath
+        }
+    }
+
+    return $null
+}
+
+$exeFullPath = Resolve-BrowserGuardExecutable -ScriptRoot $PSScriptRoot -ExecutablePath $ExecutablePath
+if ($null -eq $exeFullPath) {
+    throw "Executable not found. Put browser_guard.exe next to install-startup.ps1 or pass -ExecutablePath explicitly."
 }
 
 New-Item -ItemType Directory -Force -Path $InstallDirectory | Out-Null

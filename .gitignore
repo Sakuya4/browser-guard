@@ -8,3 +8,8 @@
 *.ilk
 *.exe
 *.log
+/dist/*.zip
+/dist/*.sha256
+/dist/release-notes-*.md
+/dist/release-test/
+/dist/browser_guard-windows-x64-v*/

@@ -296,8 +296,13 @@ static BOOL CALLBACK enum_windows_callback(HWND hwnd, LPARAM lparam) {
         return TRUE;
     }
 
+    if (group->anchor_window == NULL && !IsIconic(hwnd)) {
+        group->anchor_window = GetAncestor(hwnd, GA_ROOT);
+    }
+
     if (hwnd == context->foreground_window && !IsIconic(hwnd)) {
         group->has_foreground_window = true;
+        group->anchor_window = GetAncestor(hwnd, GA_ROOT);
     }
 
     return TRUE;

@@ -118,6 +118,8 @@ Available options:
 - `--aggressive-memory`: shortcut for trim + low memory priority + power throttling
 - `--verbose`: print state transitions and memory totals every loop
 
+Current default behavior waits `60000ms` before suspending a background browser, so brief app switching does not immediately freeze the browser.
+
 ## Install on Windows
 
 To install a startup shortcut for the current user:

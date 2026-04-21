@@ -13,6 +13,7 @@ typedef struct TrackedProcess {
     DWORD pid;
     wchar_t exe_name[MAX_PATH];
     HWND last_known_window;
+    bool last_known_window_was_maximized;
     bool suspended;
     bool background_mode;
     bool suspend_disabled;
@@ -28,6 +29,7 @@ static volatile BOOL g_resume_requested = FALSE;
 static HWND g_overlay_window = NULL;
 static HWND g_resume_target_window = NULL;
 static HWND g_overlay_target_window = NULL;
+static bool g_resume_target_was_maximized = false;
 
 typedef struct OverlayState {
     bool visible;
@@ -96,6 +98,22 @@ static TrackedProcess *find_tracked_process(TrackedProcess *tracked, size_t trac
 
 static bool tick_deadline_reached(DWORD now_tick, DWORD deadline_tick) {
     return (LONG)(now_tick - deadline_tick) >= 0;
+}
+
+static bool window_restores_to_maximized(HWND hwnd) {
+    WINDOWPLACEMENT placement;
+
+    if (hwnd == NULL || !IsWindow(hwnd)) {
+        return false;
+    }
+
+    ZeroMemory(&placement, sizeof(placement));
+    placement.length = sizeof(placement);
+    if (!GetWindowPlacement(hwnd, &placement)) {
+        return IsZoomed(hwnd) != FALSE;
+    }
+
+    return IsZoomed(hwnd) != FALSE || (placement.flags & WPF_RESTORETOMAXIMIZED) != 0;
 }
 
 static bool register_overlay_window_class(void) {
@@ -237,6 +255,31 @@ static bool clicked_suspended_browser_window(
     return true;
 }
 
+static bool find_tracked_window_restore_mode(
+    const TrackedProcess *tracked,
+    size_t tracked_count,
+    HWND target_window
+) {
+    DWORD pid = 0;
+
+    if (target_window == NULL || !IsWindow(target_window)) {
+        return false;
+    }
+
+    GetWindowThreadProcessId(target_window, &pid);
+    if (pid == 0) {
+        return false;
+    }
+
+    for (size_t i = 0; i < tracked_count; ++i) {
+        if (tracked[i].pid == pid) {
+            return tracked[i].last_known_window_was_maximized;
+        }
+    }
+
+    return false;
+}
+
 static void pump_ui_messages(
     const SecurityContext *security_context,
     const TrackedProcess *tracked,
@@ -269,6 +312,11 @@ static void pump_ui_messages(
         HWND target_browser_window = NULL;
         if (clicked_suspended_browser_window(security_context, tracked, tracked_count, &target_browser_window)) {
             g_resume_target_window = target_browser_window;
+            g_resume_target_was_maximized = find_tracked_window_restore_mode(
+                tracked,
+                tracked_count,
+                target_browser_window
+            );
             g_resume_requested = TRUE;
             return;
         }
@@ -442,6 +490,7 @@ static void ensure_group_state(
             entry->pid = pid;
             wcsncpy(entry->exe_name, group->exe_name, MAX_PATH - 1);
             entry->last_known_window = group->anchor_window;
+            entry->last_known_window_was_maximized = window_restores_to_maximized(group->anchor_window);
             entry->last_active_tick = now_tick;
             entry->manual_resume_until_tick = now_tick;
             entry->last_heartbeat_tick = now_tick;
@@ -451,6 +500,7 @@ static void ensure_group_state(
         entry->seen_this_pass = true;
         if (group->anchor_window != NULL) {
             entry->last_known_window = group->anchor_window;
+            entry->last_known_window_was_maximized = window_restores_to_maximized(group->anchor_window);
         }
         if (group_is_active) {
             entry->last_active_tick = now_tick;
@@ -569,9 +619,15 @@ int run_browser_guard(const AppConfig *config) {
             resume_all_tracked(tracked, tracked_count, config);
             hold_resumed_processes(tracked, tracked_count, now_tick, config->manual_resume_grace_ms);
             if (g_resume_target_window != NULL) {
-                ShowWindow(g_resume_target_window, SW_RESTORE);
+                if (IsIconic(g_resume_target_window)) {
+                    ShowWindow(
+                        g_resume_target_window,
+                        g_resume_target_was_maximized ? SW_SHOWMAXIMIZED : SW_RESTORE
+                    );
+                }
                 SetForegroundWindow(g_resume_target_window);
                 g_resume_target_window = NULL;
+                g_resume_target_was_maximized = false;
             }
             g_resume_requested = FALSE;
         }

@@ -8,6 +8,8 @@
 - Keeps the foreground browser alive.
 - Keeps browsers alive when they have an active Windows audio session.
 - Suspends background browsers with `NtSuspendProcess`.
+- Shows a top-left reminder while a browser is suspended.
+- Lets you click the reminder or click the suspended browser window to wake it back up.
 - Optionally trims working sets after suspension and re-trims them on a fixed interval.
 - Optionally lowers memory priority and enables Windows power throttling while the browser is suspended.
 - Restores suspended browsers automatically when they return to the foreground or when the tool exits.
@@ -91,6 +93,8 @@ Recommended aggressive mode:
 ```powershell
 .\build\Release\browser_guard.exe --aggressive-memory --trim-interval-ms 3000
 ```
+
+When a browser is paused, a small top-left overlay appears. Clicking that overlay resumes suspended browsers immediately. You can also click the paused browser window itself; `browser_guard` will resume it and try to bring it back to the foreground.
 
 Available options:
 

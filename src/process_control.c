@@ -204,6 +204,17 @@ static bool is_manageable_browser_process(const SecurityContext *context, DWORD 
     return matches;
 }
 
+bool is_manageable_browser_pid(const SecurityContext *context, DWORD pid) {
+    wchar_t exe_name[MAX_PATH];
+
+    ZeroMemory(exe_name, sizeof(exe_name));
+    if (!query_process_base_name(pid, exe_name, MAX_PATH)) {
+        return false;
+    }
+
+    return is_manageable_browser_process(context, pid, exe_name);
+}
+
 static BrowserGroup *find_group_by_name(BrowserGroup *groups, size_t group_count, const wchar_t *exe_name) {
     for (size_t i = 0; i < group_count; ++i) {
         if (_wcsicmp(groups[i].exe_name, exe_name) == 0) {

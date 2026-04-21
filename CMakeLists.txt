@@ -8,7 +8,9 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 add_executable(browser_guard
     src/main.c
+    src/app_config.c
     src/browser_guard.c
+    src/process_control.c
 )
 
 target_include_directories(browser_guard PRIVATE include)
@@ -16,6 +18,7 @@ target_include_directories(browser_guard PRIVATE include)
 target_compile_definitions(browser_guard PRIVATE UNICODE _UNICODE)
 
 target_link_libraries(browser_guard PRIVATE
+    Advapi32
     Ole32
     Uuid
     Psapi

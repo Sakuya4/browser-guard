@@ -1,16 +1,16 @@
 # browser_guard
 
-`browser_guard` is a Windows C utility that freezes supported browsers when they are not the foreground app, then resumes them as soon as they become active again or start playing audio.
+`browser_guard` is a Windows C utility that suspends supported browsers when they are minimized or no longer in the foreground, then resumes them the moment they become active again or start outputting audio. The project is aimed at reducing background CPU churn and shrinking resident memory pressure without permanently killing the browser.
 
-## Why this exists
+## What the project does now
 
-Modern browsers keep multiple processes alive even when they are sitting on a side monitor or minimized. This project takes an aggressive but reversible approach:
-
-- If a supported browser is not the foreground app, its processes are suspended.
-- If that browser is actively outputting audio, it is kept alive so music or video playback can continue.
-- An optional working-set trim can be enabled to push memory usage down further after suspension.
-
-## Current behavior
+- Detects supported browser processes owned by the current user in the current logon session.
+- Keeps the foreground browser alive.
+- Keeps browsers alive when they have an active Windows audio session.
+- Suspends background browsers with `NtSuspendProcess`.
+- Optionally trims working sets after suspension and re-trims them on a fixed interval.
+- Optionally lowers memory priority and enables Windows power throttling while the browser is suspended.
+- Restores suspended browsers automatically when they return to the foreground or when the tool exits.
 
 Supported browser families:
 
@@ -21,15 +21,46 @@ Supported browser families:
 - `opera.exe`
 - `vivaldi.exe`
 
-Suspension rules:
+## Memory behavior
 
-- Foreground browser: keep running
-- Background browser with active audio session: keep running
-- Background browser without active audio session: suspend
+This project can reduce the browser's resident memory footprint very aggressively, but Windows memory accounting matters here:
 
-## Important limitation
+- `Working set` is the amount of memory currently resident in RAM.
+- `Private bytes` is committed private memory. It often falls much less than working set, because suspension and trimming do not force the browser to fully decommit its heaps.
 
-This version detects active audio sessions, not "video frames". A muted video can still be suspended because Windows does not expose a simple, reliable "video is playing" signal across all browsers.
+That means `browser_guard` is very good at giving RAM back to the system cache and other apps, but it is not the same as closing the browser. The benchmark included in this repository makes that distinction visible.
+
+## Architecture
+
+The codebase is split so each layer has a narrow job:
+
+- [src/main.c](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\src\main.c): CLI entry point
+- [src/app_config.c](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\src\app_config.c): argument parsing and defaults
+- [src/browser_guard.c](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\src\browser_guard.c): orchestration loop and lifecycle tracking
+- [src/process_control.c](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\src\process_control.c): process discovery, ownership checks, audio detection, suspension, and memory policy
+
+Public headers live under [include](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\include).
+
+## Security and stability posture
+
+This tool touches live processes, so the guardrails matter as much as the feature:
+
+- Only processes in an explicit browser whitelist are considered.
+- Only processes owned by the same Windows user are managed.
+- Only processes in the same session are managed.
+- Handles, COM interfaces, and temporary token buffers are always released on the same control path that acquired them.
+- The runtime uses bounded arrays for tracked groups and tracked processes to avoid accidental heap growth.
+- Suspension is reversible. On shutdown, tracked processes are resumed automatically.
+
+## Memory-leak posture
+
+The program is intentionally conservative with allocation:
+
+- The main runtime loop uses stack storage for browser groups and tracked process state.
+- Token inspection uses bounded stack buffers first and falls back to `HeapAlloc` only when Windows reports a larger token payload.
+- Every `OpenProcess`, `OpenProcessToken`, COM object acquisition, and heap allocation has a matching release path.
+
+This does not prove the absence of bugs, but it narrows the number of places where leaks can happen and makes review easier.
 
 ## Build
 
@@ -47,21 +78,93 @@ cmake -S . -B build -G "MinGW Makefiles"
 cmake --build build
 ```
 
-## Usage
+## Run
+
+Minimal run:
 
 ```powershell
-.\build\browser_guard.exe --verbose
+.\build\Release\browser_guard.exe
 ```
 
-Optional flags:
+Recommended aggressive mode:
 
-- `--interval-ms <n>`: polling interval, default `1000`
-- `--trim-working-set`: trim working set after suspension
-- `--verbose`: print suspend/resume decisions
+```powershell
+.\build\Release\browser_guard.exe --aggressive-memory --trim-interval-ms 3000
+```
 
-Press `Ctrl+C` to exit. Any suspended browser processes tracked by the tool are resumed during shutdown.
+Available options:
 
-## Notes
+- `--interval-ms N`: main polling interval, default `1000`
+- `--trim-working-set`: trim browser working sets after suspension
+- `--trim-interval-ms N`: re-trim suspended browsers every `N` milliseconds
+- `--lower-memory-priority`: lower process memory priority while suspended
+- `--eco-qos`: apply Windows power throttling while suspended
+- `--aggressive-memory`: shortcut for trim + low memory priority + power throttling
+- `--verbose`: print state transitions and memory totals every loop
 
-- You may need to run with the same user account that owns the browser processes.
-- This is an MVP intended for experimentation. Test with a non-critical browsing session first.
+## Install on Windows
+
+To install a startup shortcut for the current user:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\install-startup.ps1
+```
+
+This copies `browser_guard.exe` into `%LOCALAPPDATA%\browser_guard` and creates a shortcut in the Windows Startup folder so it launches at sign-in.
+
+To remove that installation:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\uninstall-startup.ps1
+```
+
+## Benchmark and comparison
+
+This repository includes a repeatable benchmark script:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\compare-memory.ps1
+```
+
+Outputs:
+
+- [docs/memory-benchmark.csv](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\docs\memory-benchmark.csv)
+- [docs/memory-benchmark.md](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\docs\memory-benchmark.md)
+
+Recommended benchmark condition:
+
+1. Open the browser normally.
+2. Put it on the side monitor or leave it minimized.
+3. Focus another app during the guarded phase.
+
+### Latest local sample on this Windows machine
+
+The benchmark script was executed in this workspace on `2026-04-21` with `browser_guard.exe --aggressive-memory --trim-interval-ms 3000`.
+
+| Phase | Avg process count | Avg working set (MB) | Avg private bytes (MB) |
+| --- | ---: | ---: | ---: |
+| Baseline | 39 | 8.05 | 6991.09 |
+| Guarded | 39 | 0.31 | 6991.11 |
+
+Result:
+
+- Working set dropped by `7.74 MB` or `96.15%`.
+- Private bytes increased by `0.02 MB`, which is effectively unchanged.
+
+Interpretation:
+
+- This specific sample was taken after the browser had already spent time in the background, so the baseline working set was already low.
+- The project still reduced the remaining resident footprint by `96.15%` in that run.
+- The project does not currently force large private-byte reductions, because that would require the browser itself to discard heaps or unload content.
+- Cold or heavily used browser sessions can show much larger working-set drops than this warmed-up sample.
+- In practice, this still helps when a game or other heavy foreground app needs RAM immediately, because Windows can repurpose the trimmed pages much more easily.
+
+## Limitations
+
+- Muted video playback can still be suspended, because Windows does not expose a universal cross-browser "video is playing" signal.
+- Some browser helper processes can reject management if Windows denies access.
+- Private-byte reductions are expected to be smaller than working-set reductions.
+
+## Repository
+
+GitHub repository: [Sakuya4/browser-guard](https://github.com/Sakuya4/browser-guard)

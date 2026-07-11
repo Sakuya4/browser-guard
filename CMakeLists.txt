@@ -23,11 +23,20 @@ add_executable(browser_guard_control WIN32
     src/process_identity.c
 )
 
+add_executable(browser_guard_recovery WIN32
+    src/recovery_main.c
+    src/process_identity.c
+    src/recovery_broker.c
+    src/recovery_journal.c
+)
+
 target_include_directories(browser_guard PRIVATE include)
 target_include_directories(browser_guard_control PRIVATE include)
+target_include_directories(browser_guard_recovery PRIVATE include)
 
 target_compile_definitions(browser_guard PRIVATE UNICODE _UNICODE)
 target_compile_definitions(browser_guard_control PRIVATE UNICODE _UNICODE)
+target_compile_definitions(browser_guard_recovery PRIVATE UNICODE _UNICODE)
 
 target_link_libraries(browser_guard PRIVATE
     Advapi32
@@ -40,6 +49,11 @@ target_link_libraries(browser_guard_control PRIVATE
     Advapi32
     Shell32
     User32
+)
+
+target_link_libraries(browser_guard_recovery PRIVATE
+    Advapi32
+    Shell32
 )
 
 if(BUILD_TESTING)
@@ -90,4 +104,30 @@ if(BUILD_TESTING)
     target_compile_definitions(browser_guard_recovery_journal_tests PRIVATE UNICODE _UNICODE)
     target_link_libraries(browser_guard_recovery_journal_tests PRIVATE Advapi32)
     add_test(NAME recovery_journal COMMAND browser_guard_recovery_journal_tests)
+
+    add_executable(browser_guard_recovery_fixture WIN32
+        tests/recovery_fixture.c
+    )
+    target_compile_definitions(browser_guard_recovery_fixture PRIVATE UNICODE _UNICODE)
+    target_link_libraries(browser_guard_recovery_fixture PRIVATE Shell32)
+
+    add_executable(browser_guard_recovery_owner_fixture WIN32
+        tests/recovery_owner_fixture.c
+        src/process_identity.c
+        src/recovery_broker.c
+        src/recovery_journal.c
+    )
+    target_include_directories(browser_guard_recovery_owner_fixture PRIVATE include)
+    target_compile_definitions(browser_guard_recovery_owner_fixture PRIVATE UNICODE _UNICODE)
+    target_link_libraries(browser_guard_recovery_owner_fixture PRIVATE Advapi32 Shell32)
+
+    add_test(
+        NAME crash_recovery
+        COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+            -File ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_crash_recovery.ps1
+            -OwnerPath $<TARGET_FILE:browser_guard_recovery_owner_fixture>
+            -BrokerPath $<TARGET_FILE:browser_guard_recovery>
+            -FixturePath $<TARGET_FILE:browser_guard_recovery_fixture>
+    )
+    set_tests_properties(crash_recovery PROPERTIES TIMEOUT 15)
 endif()

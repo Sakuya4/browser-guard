@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 
 project(browser_guard C)
 
+include(CTest)
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
@@ -11,6 +13,7 @@ add_executable(browser_guard WIN32
     src/app_config.c
     src/browser_guard.c
     src/process_control.c
+    src/suspend_policy.c
 )
 
 add_executable(browser_guard_control WIN32
@@ -35,3 +38,13 @@ target_link_libraries(browser_guard_control PRIVATE
     Shell32
     User32
 )
+
+if(BUILD_TESTING)
+    add_executable(browser_guard_policy_tests
+        tests/test_suspend_policy.c
+        src/suspend_policy.c
+    )
+
+    target_include_directories(browser_guard_policy_tests PRIVATE include)
+    add_test(NAME suspend_policy COMMAND browser_guard_policy_tests)
+endif()

@@ -4,6 +4,7 @@
 
 #include "browser_guard.h"
 #include "process_control.h"
+#include "suspend_policy.h"
 
 #define BG_OVERLAY_CLASS_NAME L"BrowserGuardOverlayWindow"
 #define BG_OVERLAY_WIDTH 320
@@ -473,7 +474,13 @@ static void ensure_group_state(
     DWORD now_tick
 ) {
     bool group_is_active = group->has_foreground_window || group->has_audio;
-    bool should_use_background_mode = !group_is_active && group->has_visible_window && !group->is_minimized;
+    size_t visible_window_count = group->minimized_window_count + group->visible_restored_window_count;
+    bool minimized_only = browser_windows_are_minimized_only(
+        visible_window_count,
+        group->minimized_window_count,
+        group->visible_restored_window_count
+    );
+    bool should_use_background_mode = !group_is_active && group->has_visible_window && !minimized_only;
 
     for (size_t i = 0; i < group->pid_count; ++i) {
         DWORD pid = group->pids[i];
@@ -508,7 +515,7 @@ static void ensure_group_state(
 
         if (!group_is_active &&
             !entry->suspend_disabled &&
-            (config->suspend_policy == SUSPEND_POLICY_ALL_BACKGROUND || group->is_minimized) &&
+            (config->suspend_policy == SUSPEND_POLICY_ALL_BACKGROUND || minimized_only) &&
             tick_deadline_reached(now_tick, entry->manual_resume_until_tick) &&
             tick_deadline_reached(now_tick, entry->last_active_tick + config->background_grace_ms)) {
             should_suspend = true;

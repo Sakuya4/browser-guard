@@ -18,7 +18,8 @@ typedef struct BrowserGroup {
     HWND anchor_window;
     bool has_foreground_window;
     bool has_visible_window;
-    bool is_minimized;
+    size_t minimized_window_count;
+    size_t visible_restored_window_count;
     bool has_audio;
 } BrowserGroup;
 

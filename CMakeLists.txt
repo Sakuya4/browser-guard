@@ -13,7 +13,10 @@ add_executable(browser_guard WIN32
     src/app_config.c
     src/browser_guard.c
     src/control_protocol.c
+    src/process_identity.c
     src/process_control.c
+    src/recovery_broker.c
+    src/recovery_journal.c
     src/suspend_policy.c
 )
 

@@ -1,6 +1,7 @@
 param(
     [string]$ExecutablePath = "",
     [string]$ControlExecutablePath = "",
+    [string]$RecoveryExecutablePath = "",
     [string]$InstallDirectory = "$env:LOCALAPPDATA\browser_guard",
     [string]$Arguments = "--aggressive-memory --minimized-only --trim-interval-ms 3000 --background-grace-ms 60000 --manual-resume-grace-ms 8000 --heartbeat-interval-ms 5000 --window-probe-timeout-ms 750",
     [switch]$Overwrite
@@ -46,6 +47,26 @@ function Request-InstalledGuardShutdown {
     $controller = Start-Process -FilePath $ControllerPath -ArgumentList "--shutdown" -PassThru -Wait -WindowStyle Hidden
     if ($controller.ExitCode -ne 0) {
         throw "browser_guard did not complete a safe shutdown. Refusing to overwrite the running executable."
+    }
+}
+
+function Wait-InstalledProcessExit {
+    param(
+        [string]$ProcessName,
+        [string]$ExpectedPath,
+        [int]$TimeoutSeconds = 5
+    )
+
+    $normalizedExpectedPath = [System.IO.Path]::GetFullPath($ExpectedPath)
+    $matchingProcesses = Get-CimInstance Win32_Process -Filter "Name = '$ProcessName'" | Where-Object {
+        $_.ExecutablePath -and ([System.IO.Path]::GetFullPath($_.ExecutablePath) -ieq $normalizedExpectedPath)
+    }
+
+    foreach ($process in $matchingProcesses) {
+        Wait-Process -Id $process.ProcessId -Timeout $TimeoutSeconds -ErrorAction SilentlyContinue
+        if (Get-Process -Id $process.ProcessId -ErrorAction SilentlyContinue) {
+            throw "$ProcessName did not finish recovery work within $TimeoutSeconds seconds. Refusing to replace it."
+        }
     }
 }
 
@@ -97,9 +118,18 @@ if ($null -eq $controlExeFullPath) {
     throw "Control executable not found. Put browser_guard_control.exe next to install-startup.ps1 or pass -ControlExecutablePath explicitly."
 }
 
+$recoveryExeFullPath = Resolve-ExecutableCandidate -ScriptRoot $PSScriptRoot -ExecutablePath $RecoveryExecutablePath -DefaultRelativePaths @(
+    "browser_guard_recovery.exe",
+    "build\Release\browser_guard_recovery.exe"
+)
+if ($null -eq $recoveryExeFullPath) {
+    throw "Recovery executable not found. Put browser_guard_recovery.exe next to install-startup.ps1 or pass -RecoveryExecutablePath explicitly."
+}
+
 New-Item -ItemType Directory -Force -Path $InstallDirectory | Out-Null
 $installedExePath = Join-Path $InstallDirectory "browser_guard.exe"
 $installedControlExePath = Join-Path $InstallDirectory "browser_guard_control.exe"
+$installedRecoveryExePath = Join-Path $InstallDirectory "browser_guard_recovery.exe"
 $installedArgsPath = Join-Path $InstallDirectory "browser_guard.args.txt"
 $disabledFlagPath = Join-Path $InstallDirectory "browser_guard.disabled"
 $legacyPaths = @(
@@ -115,11 +145,13 @@ if ((Test-Path $installedExePath) -and -not $Overwrite) {
 
 if ($Overwrite) {
     Request-InstalledGuardShutdown -GuardPath $installedExePath -ControllerPath $installedControlExePath
+    Wait-InstalledProcessExit -ProcessName "browser_guard_recovery.exe" -ExpectedPath $installedRecoveryExePath
     Stop-InstalledProcessIfRunning -ProcessName "browser_guard_control.exe" -ExpectedPath $installedControlExePath
 }
 
 Copy-Item -Force -Path $exeFullPath -Destination $installedExePath
 Copy-Item -Force -Path $controlExeFullPath -Destination $installedControlExePath
+Copy-Item -Force -Path $recoveryExeFullPath -Destination $installedRecoveryExePath
 Set-Content -Path $installedArgsPath -Value $Arguments -Encoding Ascii
 Remove-Item -LiteralPath $disabledFlagPath -Force -ErrorAction SilentlyContinue
 foreach ($legacyPath in $legacyPaths) {

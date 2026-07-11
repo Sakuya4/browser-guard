@@ -1,195 +1,172 @@
 # browser_guard
 
-`browser_guard` is a Windows C utility that suspends supported browsers when they are minimized or no longer in the foreground, then resumes them the moment they become active again or start outputting audio. The project is aimed at reducing background CPU churn and shrinking resident memory pressure without permanently killing the browser.
+`browser_guard` is an experimental Windows resource-management utility written in C11. It reduces background browser CPU activity and resident memory pressure while using a fail-closed recovery design: if safe recovery is unavailable, the guard refuses to suspend browser processes.
 
-## What the project does now
+The project is designed as a practical Windows systems-programming case study, not as a claim that process-level suspension understands browser tabs.
 
-- Detects supported browser processes owned by the current user in the current logon session.
-- Keeps the foreground browser alive.
-- Keeps browsers alive when they have an active Windows audio session.
-- Suspends background browsers with `NtSuspendProcess`.
-- Shows a top-left reminder while a browser is suspended.
-- Lets you click the reminder or click the suspended browser window to wake it back up.
-- Waits briefly before suspending a newly backgrounded browser so normal app switching does not feel sticky.
-- Keeps a manually resumed browser awake for a short grace period to avoid immediate re-locks.
-- Optionally trims working sets after suspension and re-trims them on a fixed interval.
-- Optionally lowers memory priority and enables Windows power throttling while the browser is suspended.
-- Restores suspended browsers automatically when they return to the foreground or when the tool exits.
+## Why this project exists
 
-Supported browser families:
+Browsers can retain a large resident footprint while a game, compiler, EDA tool, or local model needs memory immediately. `browser_guard` applies reversible process policies to supported browsers owned by the current Windows user and logon session.
 
-- `chrome.exe`
-- `msedge.exe`
-- `firefox.exe`
-- `brave.exe`
-- `opera.exe`
-- `vivaldi.exe`
+The default policy is deliberately conservative:
 
-## Memory behavior
+- only browser families whose visible windows are all minimized are eligible for suspension;
+- foreground and active-audio browser families remain running;
+- newly backgrounded browsers receive a grace period;
+- aggressive background suspension requires explicit opt-in;
+- every suspend is journaled before it occurs;
+- an independent broker resumes journaled processes if the guard exits unexpectedly.
 
-This project can reduce the browser's resident memory footprint very aggressively, but Windows memory accounting matters here:
+## Current architecture
 
-- `Working set` is the amount of memory currently resident in RAM.
-- `Private bytes` is committed private memory. It often falls much less than working set, because suspension and trimming do not force the browser to fully decommit its heaps.
+The build produces three native executables:
 
-That means `browser_guard` is very good at giving RAM back to the system cache and other apps, but it is not the same as closing the browser. The benchmark included in this repository makes that distinction visible.
+| Component | Responsibility |
+| --- | --- |
+| `browser_guard.exe` | Discovers browsers, evaluates policy, applies process state, and owns the overlay. |
+| `browser_guard_control.exe` | Starts the guard or requests authenticated, graceful shutdown. It does not force-terminate the guard. |
+| `browser_guard_recovery.exe` | Waits independently and resumes validated journal records after an unexpected guard exit. |
 
-## Architecture
+See [Architecture](docs/architecture.md), [Safety Model](docs/safety.md), and the [v1 product specification](docs/specs/productization-v1.md).
 
-The codebase is split so each layer has a narrow job:
+## Supported browsers
 
-- [src/main.c](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\src\main.c): CLI entry point
-- [src/app_config.c](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\src\app_config.c): argument parsing and defaults
-- [src/browser_guard.c](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\src\browser_guard.c): orchestration loop and lifecycle tracking
-- [src/control_main.c](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\src\control_main.c): native desktop toggle and startup launcher
-- [src/process_control.c](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\src\process_control.c): process discovery, ownership checks, audio detection, suspension, and memory policy
+- Google Chrome (`chrome.exe`)
+- Microsoft Edge (`msedge.exe`)
+- Mozilla Firefox (`firefox.exe`)
+- Brave (`brave.exe`)
+- Opera (`opera.exe`)
+- Vivaldi (`vivaldi.exe`)
 
-Public headers live under [include](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\include).
+Only processes belonging to the current Windows user and current logon session are eligible.
 
-## Security and stability posture
+## Quick start
 
-This tool touches live processes, so the guardrails matter as much as the feature:
+Requirements:
 
-- Only processes in an explicit browser whitelist are considered.
-- Only processes owned by the same Windows user are managed.
-- Only processes in the same session are managed.
-- Handles, COM interfaces, and temporary token buffers are always released on the same control path that acquired them.
-- The runtime uses bounded arrays for tracked groups and tracked processes to avoid accidental heap growth.
-- Suspension is reversible. On shutdown, tracked processes are resumed automatically.
+- Windows 10 or Windows 11 x64
+- Visual Studio 2022 Build Tools with the Desktop development with C++ workload
+- CMake 3.20 or newer
 
-## Memory-leak posture
-
-The program is intentionally conservative with allocation:
-
-- The main runtime loop uses stack storage for browser groups and tracked process state.
-- Token inspection uses bounded stack buffers first and falls back to `HeapAlloc` only when Windows reports a larger token payload.
-- Every `OpenProcess`, `OpenProcessToken`, COM object acquisition, and heap allocation has a matching release path.
-
-This does not prove the absence of bugs, but it narrows the number of places where leaks can happen and makes review easier.
-
-## Build
-
-### MSVC
+Configure, build, and test:
 
 ```powershell
-cmake -S . -B build
-cmake --build build --config Release
+cmake -S . -B build -A x64 -DBG_WARNINGS_AS_ERRORS=ON
+cmake --build build --config Release --parallel
+ctest --test-dir build -C Release --output-on-failure
 ```
 
-This produces both:
-
-- `build\Release\browser_guard.exe`
-- `build\Release\browser_guard_control.exe`
-
-### MinGW
-
-```powershell
-cmake -S . -B build -G "MinGW Makefiles"
-cmake --build build
-```
-
-## Run
-
-Minimal run:
+Run the conservative policy:
 
 ```powershell
 .\build\Release\browser_guard.exe
 ```
 
-On Windows, `browser_guard.exe` now starts as a background GUI process, so double-clicking it does not open a console window.
+Keep `browser_guard.exe`, `browser_guard_control.exe`, and `browser_guard_recovery.exe` in the same directory.
 
-Recommended aggressive mode:
-
-```powershell
-.\build\Release\browser_guard.exe --aggressive-memory --trim-interval-ms 3000
-```
-
-When a browser is paused, a small top-left overlay appears. Clicking that overlay resumes suspended browsers immediately. You can also click the paused browser window itself; `browser_guard` will resume it and try to bring it back to the foreground.
-
-Available options:
-
-- `--interval-ms N`: main polling interval, default `1000`
-- `--trim-working-set`: trim browser working sets after suspension
-- `--trim-interval-ms N`: re-trim suspended browsers every `N` milliseconds
-- `--background-grace-ms N`: wait this long before suspending a background browser
-- `--manual-resume-grace-ms N`: keep a manually resumed browser awake for this long
-- `--lower-memory-priority`: lower process memory priority while suspended
-- `--eco-qos`: apply Windows power throttling while suspended
-- `--aggressive-memory`: shortcut for trim + low memory priority + power throttling
-- `--verbose`: print state transitions and memory totals every loop
-
-Current default behavior waits `60000ms` before suspending a background browser, so brief app switching does not immediately freeze the browser.
-
-## Install on Windows
-
-To install a startup shortcut for the current user:
+## Install for the current user
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\install-startup.ps1
 ```
 
-This copies `browser_guard.exe` into `%LOCALAPPDATA%\browser_guard` and creates a shortcut in the Windows Startup folder so it launches at sign-in.
+The installer copies all three executables to `%LOCALAPPDATA%\browser_guard`, creates a per-user Startup shortcut, and creates a desktop Toggle shortcut. Its default arguments explicitly use `--minimized-only`; `--aggressive-suspend` is never enabled implicitly.
 
-The installer also copies `browser_guard_control.exe` into the same directory and creates a desktop shortcut named `browser_guard Toggle`. That shortcut is a native Windows controller:
+Upgrade an existing installation:
 
-- click it once to turn `browser_guard` off
-- click it again later to turn `browser_guard` back on
-- each toggle shows a small native confirmation popup near the bottom-right corner
-- startup launches now go through `browser_guard_control.exe --launch`, which respects the disabled flag and avoids re-enabling the guard after you intentionally turned it off
+```powershell
+powershell -ExecutionPolicy Bypass -File .\tools\install-startup.ps1 -Overwrite
+```
 
-To remove that installation:
+Upgrade and uninstall request graceful shutdown first. If the guard or recovery broker does not exit safely, the script refuses to replace or delete the running components.
+
+Uninstall:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\uninstall-startup.ps1
 ```
 
-## Benchmark and comparison
+## Command-line options
 
-This repository includes a repeatable benchmark script:
+| Option | Meaning |
+| --- | --- |
+| `--interval-ms N` | Main polling interval, default `1000`. |
+| `--background-grace-ms N` | Delay before an eligible browser may be suspended, default `60000`. |
+| `--manual-resume-grace-ms N` | Hold time after manual resume. |
+| `--minimized-only` | Suspend only when every visible window in the browser family is minimized; this is the default. |
+| `--aggressive-suspend` | Allow all background browser families to be suspended. Explicit opt-in only. |
+| `--trim-working-set` | Ask Windows to trim resident pages after suspension. |
+| `--trim-interval-ms N` | Re-trim interval when working-set trimming is enabled. |
+| `--lower-memory-priority` | Lower memory priority while managed in the background. |
+| `--eco-qos` | Request Windows power throttling. |
+| `--aggressive-memory` | Enable trim, lower memory priority, and EcoQoS together; it does not enable aggressive suspension. |
+| `--heartbeat-interval-ms N` | Interval for the legacy suspended-window probe. |
+| `--window-probe-timeout-ms N` | Timeout used by that window probe. |
+| `--verbose` | Print lifecycle, protection, and memory decisions. |
+
+## What the memory numbers mean
+
+- **Working set** is memory currently resident in physical RAM.
+- **Private bytes** is committed private memory owned by the browser.
+
+Trimming a working set can make resident pages available to other workloads without making the browser decommit its private heaps. A lower working set is therefore not the same as closing tabs or freeing the same amount of private memory. Restoring trimmed pages can also create page faults and visible latency.
+
+The repository intentionally does not publish the earlier single-run `96.15%` figure as product evidence. The current benchmark uses repeated counterbalanced trials and reports costs alongside benefits:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\compare-memory.ps1
 ```
 
-Outputs:
+See the [benchmark report placeholder and methodology](docs/memory-benchmark.md).
 
-- [docs/memory-benchmark.csv](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\docs\memory-benchmark.csv)
-- [docs/memory-benchmark.md](C:\Users\user\Documents\Codex\2026-04-21-c-code-github-repo\docs\memory-benchmark.md)
+## Safety boundaries
 
-Recommended benchmark condition:
+The project protects against several process-management failures:
 
-1. Open the browser normally.
-2. Put it on the side monitor or leave it minimized.
-3. Focus another app during the guarded phase.
+- controller shutdown uses a per-user, per-session named event with an explicit access-control list;
+- the controller verifies full executable path, Windows user, and logon session;
+- recovery records contain PID, process creation time, session, and executable path to defend against PID reuse;
+- a suspend is refused if the recovery record cannot be persisted or the broker is unavailable;
+- mixed minimized/restored browser windows are covered by regression tests;
+- integration tests use dedicated fixture processes, never the developer's browser.
 
-### Latest local sample on this Windows machine
+It cannot reliably detect browser-internal work such as muted video, downloads, uploads, WebRTC, microphone capture, unsaved forms, service workers, WebUSB, or long-running JavaScript. Process-level suspend remains experimental and uses the undocumented `NtSuspendProcess`/`NtResumeProcess` APIs.
 
-The benchmark script was executed in this workspace on `2026-04-21` with `browser_guard.exe --aggressive-memory --trim-interval-ms 3000`.
+Read [Safety Model](docs/safety.md) before enabling aggressive suspension.
 
-| Phase | Avg process count | Avg working set (MB) | Avg private bytes (MB) |
-| --- | ---: | ---: | ---: |
-| Baseline | 39 | 8.05 | 6991.09 |
-| Guarded | 39 | 0.31 | 6991.11 |
+## Tests and CI
 
-Result:
+CTest covers:
 
-- Working set dropped by `7.74 MB` or `96.15%`.
-- Private bytes increased by `0.02 MB`, which is effectively unchanged.
+- mixed multi-window suspension policy;
+- per-user/session shutdown event behavior;
+- path, user, and session process identity;
+- graceful controller shutdown;
+- recovery-journal persistence and PID reuse protection;
+- broker recovery after simulated owner crash.
 
-Interpretation:
+GitHub Actions builds Debug and Release on `windows-2022` with MSVC `/W4 /WX`, then runs the complete CTest suite.
 
-- This specific sample was taken after the browser had already spent time in the background, so the baseline working set was already low.
-- The project still reduced the remaining resident footprint by `96.15%` in that run.
-- The project does not currently force large private-byte reductions, because that would require the browser itself to discard heaps or unload content.
-- Cold or heavily used browser sessions can show much larger working-set drops than this warmed-up sample.
-- In practice, this still helps when a game or other heavy foreground app needs RAM immediately, because Windows can repurpose the trimmed pages much more easily.
+## Roadmap
 
-## Limitations
+- replace the legacy periodic resume/probe heartbeat with handle-based liveness monitoring;
+- add explainable policy reason telemetry locally, without network collection;
+- restore background memory/power policy metadata during broker recovery;
+- expand Windows 10/11 and browser-version manual test matrices;
+- investigate an optional browser-extension/native-messaging layer for tab-level semantics;
+- add a tray UI only after the safety core remains stable.
 
-- Muted video playback can still be suspended, because Windows does not expose a universal cross-browser "video is playing" signal.
-- Some browser helper processes can reject management if Windows denies access.
-- Private-byte reductions are expected to be smaller than working-set reductions.
+## Project documentation
 
-## Repository
+- [Architecture](docs/architecture.md)
+- [Safety Model](docs/safety.md)
+- [English project demo](docs/project-demo.md)
+- [繁體中文專案講稿](docs/project-demo.zh-TW.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security Policy](SECURITY.md)
+- [Changelog](CHANGELOG.md)
+- [Architecture Decision Records](docs/decisions/)
 
-GitHub repository: [Sakuya4/browser-guard](https://github.com/Sakuya4/browser-guard)
+## License
+
+MIT. See [LICENSE](LICENSE).

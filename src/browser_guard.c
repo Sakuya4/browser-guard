@@ -5,11 +5,15 @@
 #include "browser_guard.h"
 #include "control_protocol.h"
 #include "process_control.h"
+#include "recovery_broker.h"
+#include "recovery_journal.h"
 #include "suspend_policy.h"
 
 #define BG_OVERLAY_CLASS_NAME L"BrowserGuardOverlayWindow"
 #define BG_OVERLAY_WIDTH 320
 #define BG_OVERLAY_HEIGHT 64
+#define BG_RECOVERY_EXE_NAME L"browser_guard_recovery.exe"
+#define BG_RECOVERY_JOURNAL_NAME L"browser_guard.recovery.journal"
 
 typedef struct TrackedProcess {
     DWORD pid;
@@ -38,6 +42,23 @@ typedef struct OverlayState {
     unsigned int suspended_count;
     HWND target_window;
 } OverlayState;
+
+static bool build_sibling_path(const wchar_t *file_name, wchar_t *path, size_t path_count) {
+    DWORD length = GetModuleFileNameW(NULL, path, (DWORD)path_count);
+    wchar_t *separator;
+
+    if (length == 0 || length >= path_count) {
+        return false;
+    }
+
+    separator = wcsrchr(path, L'\\');
+    if (separator == NULL) {
+        return false;
+    }
+
+    separator[1] = L'\0';
+    return wcscat_s(path, path_count, file_name) == 0;
+}
 
 static LRESULT CALLBACK overlay_window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
@@ -334,11 +355,20 @@ static void pump_ui_messages(
     }
 }
 
-static void resume_all_tracked(TrackedProcess *tracked, size_t tracked_count, const AppConfig *config) {
+static void resume_all_tracked(
+    TrackedProcess *tracked,
+    size_t tracked_count,
+    const AppConfig *config,
+    BgRecoveryJournal *recovery_journal
+) {
     for (size_t i = 0; i < tracked_count; ++i) {
         if (tracked[i].suspended) {
-            set_process_suspended(tracked[i].pid, false, config);
-            tracked[i].suspended = false;
+            if (set_process_suspended(tracked[i].pid, false, config)) {
+                tracked[i].suspended = false;
+                if (recovery_journal != NULL) {
+                    bg_recovery_journal_unregister(recovery_journal, tracked[i].pid);
+                }
+            }
         }
         if (tracked[i].background_mode) {
             restore_process_foreground_mode(tracked[i].pid, config);
@@ -359,13 +389,20 @@ static void hold_resumed_processes(
     }
 }
 
-static void cleanup_tracked_processes(TrackedProcess *tracked, size_t *tracked_count, const AppConfig *config) {
+static void cleanup_tracked_processes(
+    TrackedProcess *tracked,
+    size_t *tracked_count,
+    const AppConfig *config,
+    BgRecoveryJournal *recovery_journal
+) {
     size_t write_index = 0;
 
     for (size_t i = 0; i < *tracked_count; ++i) {
         if (!tracked[i].seen_this_pass) {
             if (tracked[i].suspended) {
-                set_process_suspended(tracked[i].pid, false, config);
+                if (set_process_suspended(tracked[i].pid, false, config) && recovery_journal != NULL) {
+                    bg_recovery_journal_unregister(recovery_journal, tracked[i].pid);
+                }
             }
             if (tracked[i].background_mode) {
                 restore_process_foreground_mode(tracked[i].pid, config);
@@ -383,7 +420,8 @@ static void cleanup_tracked_processes(TrackedProcess *tracked, size_t *tracked_c
 static void run_suspend_heartbeat(
     TrackedProcess *entry,
     const AppConfig *config,
-    DWORD now_tick
+    DWORD now_tick,
+    BgRecoveryJournal *recovery_journal
 ) {
     HWND probe_window = entry->last_known_window;
     bool probe_ok = false;
@@ -395,7 +433,6 @@ static void run_suspend_heartbeat(
     entry->last_heartbeat_tick = now_tick;
 
     if (!set_process_suspended(entry->pid, false, config)) {
-        entry->suspended = false;
         entry->suspend_disabled = true;
         entry->manual_resume_until_tick = now_tick + config->manual_resume_grace_ms;
         entry->last_active_tick = now_tick;
@@ -410,6 +447,9 @@ static void run_suspend_heartbeat(
     probe_ok = probe_browser_window(probe_window, config->window_probe_timeout_ms);
     if (!probe_ok) {
         entry->suspended = false;
+        if (recovery_journal != NULL) {
+            bg_recovery_journal_unregister(recovery_journal, entry->pid);
+        }
         entry->suspend_disabled = true;
         entry->manual_resume_until_tick = now_tick + config->manual_resume_grace_ms;
         entry->last_active_tick = now_tick;
@@ -418,6 +458,9 @@ static void run_suspend_heartbeat(
 
     if (!set_process_suspended(entry->pid, true, config)) {
         entry->suspended = false;
+        if (recovery_journal != NULL) {
+            bg_recovery_journal_unregister(recovery_journal, entry->pid);
+        }
         entry->suspend_disabled = true;
         entry->manual_resume_until_tick = now_tick + config->manual_resume_grace_ms;
         entry->last_active_tick = now_tick;
@@ -478,7 +521,8 @@ static void ensure_group_state(
     size_t *tracked_count,
     size_t tracked_capacity,
     const AppConfig *config,
-    DWORD now_tick
+    DWORD now_tick,
+    BgRecoveryJournal *recovery_journal
 ) {
     bool group_is_active = group->has_foreground_window || group->has_audio;
     size_t visible_window_count = group->minimized_window_count + group->visible_restored_window_count;
@@ -554,7 +598,18 @@ static void ensure_group_state(
         }
 
         if (entry->suspended != should_suspend) {
+            if (should_suspend &&
+                (recovery_journal == NULL || !bg_recovery_journal_register(recovery_journal, pid))) {
+                entry->suspend_disabled = true;
+                if (config->verbose) {
+                    fwprintf(stdout, L"[protect] recovery unavailable; refusing to suspend pid=%lu (%ls)\n", pid, group->exe_name);
+                }
+                continue;
+            }
             if (!set_process_suspended(pid, should_suspend, config)) {
+                if (should_suspend && recovery_journal != NULL) {
+                    bg_recovery_journal_unregister(recovery_journal, pid);
+                }
                 if (config->verbose) {
                     fwprintf(stdout, L"[warn] unable to change pid=%lu (%ls)\n", pid, group->exe_name);
                 }
@@ -562,6 +617,9 @@ static void ensure_group_state(
             }
 
             entry->suspended = should_suspend;
+            if (!should_suspend && recovery_journal != NULL) {
+                bg_recovery_journal_unregister(recovery_journal, pid);
+            }
             entry->last_trim_tick = now_tick;
             entry->last_heartbeat_tick = now_tick;
             if (!should_suspend) {
@@ -578,7 +636,7 @@ static void ensure_group_state(
             continue;
         }
 
-        run_suspend_heartbeat(entry, config, now_tick);
+        run_suspend_heartbeat(entry, config, now_tick, recovery_journal);
 
         if (should_suspend &&
             config->trim_working_set &&
@@ -600,6 +658,10 @@ int run_browser_guard(const AppConfig *config) {
     HANDLE shutdown_event = NULL;
     size_t tracked_count = 0;
     OverlayState overlay_state;
+    BgRecoveryJournal recovery_journal;
+    BgRecoveryJournal *active_recovery_journal = NULL;
+    wchar_t recovery_broker_path[MAX_PATH];
+    wchar_t recovery_journal_path[MAX_PATH];
 
     ZeroMemory(tracked, sizeof(tracked));
     ZeroMemory(&overlay_state, sizeof(overlay_state));
@@ -612,6 +674,16 @@ int run_browser_guard(const AppConfig *config) {
     if (shutdown_event == NULL) {
         fprintf(stderr, "Failed to create the per-session shutdown event. Is browser_guard already running?\n");
         return 1;
+    }
+
+    if (build_sibling_path(BG_RECOVERY_EXE_NAME, recovery_broker_path, MAX_PATH) &&
+        build_sibling_path(BG_RECOVERY_JOURNAL_NAME, recovery_journal_path, MAX_PATH) &&
+        bg_recover_journal_file(recovery_journal_path) &&
+        bg_recovery_journal_init(&recovery_journal, recovery_journal_path) &&
+        bg_start_recovery_broker(recovery_broker_path, recovery_journal_path)) {
+        active_recovery_journal = &recovery_journal;
+    } else if (config->verbose) {
+        fprintf(stderr, "[protect] Recovery broker unavailable; process suspension is disabled.\n");
     }
 
     hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
@@ -640,7 +712,7 @@ int run_browser_guard(const AppConfig *config) {
         DWORD now_tick = GetTickCount();
 
         if (g_resume_requested) {
-            resume_all_tracked(tracked, tracked_count, config);
+            resume_all_tracked(tracked, tracked_count, config, active_recovery_journal);
             hold_resumed_processes(tracked, tracked_count, now_tick, config->manual_resume_grace_ms);
             if (g_resume_target_window != NULL) {
                 if (IsIconic(g_resume_target_window)) {
@@ -662,14 +734,22 @@ int run_browser_guard(const AppConfig *config) {
         mark_audio_groups(groups, group_count);
 
         for (size_t i = 0; i < group_count; ++i) {
-            ensure_group_state(&groups[i], tracked, &tracked_count, BG_MAX_TRACKED_PROCESSES, config, now_tick);
+            ensure_group_state(
+                &groups[i],
+                tracked,
+                &tracked_count,
+                BG_MAX_TRACKED_PROCESSES,
+                config,
+                now_tick,
+                active_recovery_journal
+            );
         }
 
         if (config->verbose) {
             log_memory_totals(groups, group_count);
         }
 
-        cleanup_tracked_processes(tracked, &tracked_count, config);
+        cleanup_tracked_processes(tracked, &tracked_count, config, active_recovery_journal);
         overlay_state.suspended_count = count_suspended_processes(tracked, tracked_count);
         overlay_state.target_window = choose_overlay_target_window(groups, group_count, tracked, tracked_count);
         overlay_state.visible = overlay_state.suspended_count > 0 && overlay_state.target_window != NULL;
@@ -678,7 +758,7 @@ int run_browser_guard(const AppConfig *config) {
     }
 
     update_overlay_window(&(OverlayState){0});
-    resume_all_tracked(tracked, tracked_count, config);
+    resume_all_tracked(tracked, tracked_count, config, active_recovery_journal);
     destroy_overlay_window();
     CoUninitialize();
     CloseHandle(shutdown_event);

@@ -101,3 +101,47 @@ bool bg_resume_recovery_record(const BgRecoveryRecord *record) {
     CloseHandle(process);
     return status >= 0;
 }
+
+bool bg_recover_journal_file(const wchar_t *journal_path) {
+    BgRecoveryRecord *records = NULL;
+    size_t record_count = 0;
+    bool all_resolved = true;
+
+    records = (BgRecoveryRecord *)HeapAlloc(
+        GetProcessHeap(),
+        HEAP_ZERO_MEMORY,
+        BG_MAX_RECOVERY_RECORDS * sizeof(BgRecoveryRecord)
+    );
+    if (records == NULL) {
+        return false;
+    }
+
+    if (!bg_recovery_journal_load(
+            journal_path,
+            records,
+            BG_MAX_RECOVERY_RECORDS,
+            &record_count)) {
+        HeapFree(GetProcessHeap(), 0, records);
+        return false;
+    }
+
+    for (size_t i = 0; i < record_count; ++i) {
+        bool resolved = !bg_recovery_record_matches_process(&records[i]);
+
+        for (unsigned int attempt = 0; !resolved && attempt < 20; ++attempt) {
+            resolved = bg_resume_recovery_record(&records[i]);
+            if (!resolved) {
+                Sleep(100);
+            }
+        }
+        if (!resolved) {
+            all_resolved = false;
+        }
+    }
+
+    HeapFree(GetProcessHeap(), 0, records);
+    if (all_resolved) {
+        DeleteFileW(journal_path);
+    }
+    return all_resolved;
+}

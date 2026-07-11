@@ -20,6 +20,7 @@ add_executable(browser_guard WIN32
 add_executable(browser_guard_control WIN32
     src/control_main.c
     src/control_protocol.c
+    src/process_identity.c
 )
 
 target_include_directories(browser_guard PRIVATE include)
@@ -59,4 +60,14 @@ if(BUILD_TESTING)
     target_compile_definitions(browser_guard_control_protocol_tests PRIVATE UNICODE _UNICODE)
     target_link_libraries(browser_guard_control_protocol_tests PRIVATE Advapi32)
     add_test(NAME control_protocol COMMAND browser_guard_control_protocol_tests)
+
+    add_executable(browser_guard_process_identity_tests
+        tests/test_process_identity.c
+        src/process_identity.c
+    )
+
+    target_include_directories(browser_guard_process_identity_tests PRIVATE include)
+    target_compile_definitions(browser_guard_process_identity_tests PRIVATE UNICODE _UNICODE)
+    target_link_libraries(browser_guard_process_identity_tests PRIVATE Advapi32)
+    add_test(NAME process_identity COMMAND browser_guard_process_identity_tests)
 endif()

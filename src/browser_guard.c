@@ -537,6 +537,7 @@ static void ensure_group_state(
         DWORD pid = group->pids[i];
         TrackedProcess *entry = find_tracked_process(tracked, *tracked_count, pid);
         bool should_suspend = false;
+        SuspendDecision suspend_decision;
 
         if (entry == NULL) {
             if (*tracked_count >= tracked_capacity) {
@@ -564,13 +565,20 @@ static void ensure_group_state(
             entry->last_active_tick = now_tick;
         }
 
-        if (!group_is_active &&
-            !entry->suspend_disabled &&
-            (config->suspend_policy == SUSPEND_POLICY_ALL_BACKGROUND || minimized_only) &&
-            tick_deadline_reached(now_tick, entry->manual_resume_until_tick) &&
-            tick_deadline_reached(now_tick, entry->last_active_tick + config->background_grace_ms)) {
-            should_suspend = true;
-        }
+        suspend_decision = evaluate_suspend_policy(&(SuspendPolicyInput){
+            .policy = config->suspend_policy,
+            .minimized_window_count = group->minimized_window_count,
+            .visible_restored_window_count = group->visible_restored_window_count,
+            .has_foreground_window = group->has_foreground_window,
+            .has_audio = group->has_audio,
+            .suspend_disabled = entry->suspend_disabled,
+            .manual_resume_grace_elapsed = tick_deadline_reached(now_tick, entry->manual_resume_until_tick),
+            .background_grace_elapsed = tick_deadline_reached(
+                now_tick,
+                entry->last_active_tick + config->background_grace_ms
+            ),
+        });
+        should_suspend = suspend_decision.should_suspend;
 
         if (entry->background_mode != should_use_background_mode) {
             bool mode_ok = should_use_background_mode
@@ -626,6 +634,7 @@ static void ensure_group_state(
                 entry->last_active_tick = now_tick;
             }
             if (config->verbose) {
+                printf("[decision] pid=%lu action=%s reason=%s\n", pid, should_suspend ? "suspend" : "resume", suspend_reason_name(suspend_decision.reason));
                 fwprintf(
                     stdout,
                     should_suspend ? L"[suspend] pid=%lu (%ls)\n" : L"[resume] pid=%lu (%ls)\n",

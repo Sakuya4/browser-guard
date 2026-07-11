@@ -33,7 +33,8 @@ typedef struct NotificationWindowData {
 
 typedef enum ControlMode {
     CONTROL_MODE_TOGGLE,
-    CONTROL_MODE_LAUNCH
+    CONTROL_MODE_LAUNCH,
+    CONTROL_MODE_SHUTDOWN
 } ControlMode;
 
 static LRESULT CALLBACK control_window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -442,6 +443,10 @@ static ControlMode parse_mode(void) {
                 mode = CONTROL_MODE_LAUNCH;
                 break;
             }
+            if (_wcsicmp(argv[i], L"--shutdown") == 0) {
+                mode = CONTROL_MODE_SHUTDOWN;
+                break;
+            }
         }
         LocalFree(argv);
     }
@@ -492,6 +497,14 @@ static int run_toggle_mode(
     return 0;
 }
 
+static int run_shutdown_mode(const wchar_t *guard_path) {
+    if (count_guard_processes(guard_path) == 0) {
+        return 0;
+    }
+
+    return request_guard_shutdown(guard_path) ? 0 : 1;
+}
+
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous_instance, PWSTR command_line, int show_command) {
     wchar_t install_directory[MAX_PATH];
     wchar_t disabled_path[MAX_PATH];
@@ -516,6 +529,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous_instance, PWSTR comma
     mode = parse_mode();
     if (mode == CONTROL_MODE_LAUNCH) {
         return run_launch_mode(install_directory, disabled_path, guard_path);
+    }
+    if (mode == CONTROL_MODE_SHUTDOWN) {
+        return run_shutdown_mode(guard_path);
     }
 
     return run_toggle_mode(install_directory, disabled_path, guard_path);

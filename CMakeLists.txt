@@ -12,12 +12,14 @@ add_executable(browser_guard WIN32
     src/main.c
     src/app_config.c
     src/browser_guard.c
+    src/control_protocol.c
     src/process_control.c
     src/suspend_policy.c
 )
 
 add_executable(browser_guard_control WIN32
     src/control_main.c
+    src/control_protocol.c
 )
 
 target_include_directories(browser_guard PRIVATE include)
@@ -47,4 +49,14 @@ if(BUILD_TESTING)
 
     target_include_directories(browser_guard_policy_tests PRIVATE include)
     add_test(NAME suspend_policy COMMAND browser_guard_policy_tests)
+
+    add_executable(browser_guard_control_protocol_tests
+        tests/test_control_protocol.c
+        src/control_protocol.c
+    )
+
+    target_include_directories(browser_guard_control_protocol_tests PRIVATE include)
+    target_compile_definitions(browser_guard_control_protocol_tests PRIVATE UNICODE _UNICODE)
+    target_link_libraries(browser_guard_control_protocol_tests PRIVATE Advapi32)
+    add_test(NAME control_protocol COMMAND browser_guard_control_protocol_tests)
 endif()

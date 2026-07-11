@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "browser_guard.h"
+#include "control_protocol.h"
 #include "process_control.h"
 #include "suspend_policy.h"
 
@@ -285,7 +286,8 @@ static void pump_ui_messages(
     const SecurityContext *security_context,
     const TrackedProcess *tracked,
     size_t tracked_count,
-    DWORD interval_ms
+    DWORD interval_ms,
+    HANDLE shutdown_event
 ) {
     DWORD elapsed = 0;
     const DWORD slice_ms = 50;
@@ -293,6 +295,11 @@ static void pump_ui_messages(
 
     while (!g_should_stop && elapsed < interval_ms) {
         MSG message;
+
+        if (WaitForSingleObject(shutdown_event, 0) == WAIT_OBJECT_0) {
+            g_should_stop = TRUE;
+            return;
+        }
 
         while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE)) {
             TranslateMessage(&message);
@@ -590,6 +597,7 @@ int run_browser_guard(const AppConfig *config) {
     TrackedProcess tracked[BG_MAX_TRACKED_PROCESSES];
     SecurityContext security_context;
     HRESULT hr = S_OK;
+    HANDLE shutdown_event = NULL;
     size_t tracked_count = 0;
     OverlayState overlay_state;
 
@@ -600,21 +608,30 @@ int run_browser_guard(const AppConfig *config) {
         return 1;
     }
 
+    shutdown_event = bg_create_shutdown_event();
+    if (shutdown_event == NULL) {
+        fprintf(stderr, "Failed to create the per-session shutdown event. Is browser_guard already running?\n");
+        return 1;
+    }
+
     hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
     if (FAILED(hr)) {
         fprintf(stderr, "CoInitializeEx failed: 0x%08lx\n", (unsigned long)hr);
+        CloseHandle(shutdown_event);
         return 1;
     }
 
     if (!SetConsoleCtrlHandler(handle_console_signal, TRUE)) {
         fprintf(stderr, "Failed to install console control handler.\n");
         CoUninitialize();
+        CloseHandle(shutdown_event);
         return 1;
     }
 
     if (!create_overlay_window()) {
         fprintf(stderr, "Failed to create overlay window.\n");
         CoUninitialize();
+        CloseHandle(shutdown_event);
         return 1;
     }
 
@@ -657,12 +674,13 @@ int run_browser_guard(const AppConfig *config) {
         overlay_state.target_window = choose_overlay_target_window(groups, group_count, tracked, tracked_count);
         overlay_state.visible = overlay_state.suspended_count > 0 && overlay_state.target_window != NULL;
         update_overlay_window(&overlay_state);
-        pump_ui_messages(&security_context, tracked, tracked_count, config->interval_ms);
+        pump_ui_messages(&security_context, tracked, tracked_count, config->interval_ms, shutdown_event);
     }
 
     update_overlay_window(&(OverlayState){0});
     resume_all_tracked(tracked, tracked_count, config);
     destroy_overlay_window();
     CoUninitialize();
+    CloseHandle(shutdown_event);
     return 0;
 }

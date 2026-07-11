@@ -7,6 +7,8 @@
 #include <tlhelp32.h>
 #include <wchar.h>
 
+#include "control_protocol.h"
+
 #define BG_CONTROL_CLASS_NAME L"BrowserGuardControlWindow"
 #define BG_NOTIFICATION_CLASS_NAME L"BrowserGuardControlNotification"
 #define BG_INSTALLED_EXE_NAME L"browser_guard.exe"
@@ -17,6 +19,7 @@
 #define BG_NOTIFICATION_HEIGHT 108
 #define BG_NOTIFICATION_MARGIN 16
 #define BG_NOTIFICATION_TITLE_HEIGHT 28
+#define BG_GRACEFUL_SHUTDOWN_TIMEOUT_MS 5000
 
 typedef struct NotificationWindowData {
     const wchar_t *title;
@@ -193,43 +196,29 @@ static unsigned int count_guard_processes(void) {
     return count;
 }
 
-static bool terminate_guard_processes(void) {
-    bool success = true;
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    PROCESSENTRY32W entry;
+static bool request_guard_shutdown(void) {
+    HANDLE shutdown_event = bg_open_shutdown_event();
+    DWORD start_tick = GetTickCount();
 
-    if (snapshot == INVALID_HANDLE_VALUE) {
+    if (shutdown_event == NULL) {
         return false;
     }
 
-    ZeroMemory(&entry, sizeof(entry));
-    entry.dwSize = sizeof(entry);
-
-    if (Process32FirstW(snapshot, &entry)) {
-        do {
-            if (_wcsicmp(entry.szExeFile, BG_INSTALLED_EXE_NAME) != 0) {
-                continue;
-            }
-
-            HANDLE process = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, entry.th32ProcessID);
-            if (process == NULL) {
-                success = false;
-                continue;
-            }
-
-            if (!TerminateProcess(process, 0)) {
-                success = false;
-                CloseHandle(process);
-                continue;
-            }
-
-            WaitForSingleObject(process, 2000);
-            CloseHandle(process);
-        } while (Process32NextW(snapshot, &entry));
+    if (!SetEvent(shutdown_event)) {
+        CloseHandle(shutdown_event);
+        return false;
     }
 
-    CloseHandle(snapshot);
-    return success;
+    CloseHandle(shutdown_event);
+
+    while (count_guard_processes() > 0) {
+        if ((DWORD)(GetTickCount() - start_tick) >= BG_GRACEFUL_SHUTDOWN_TIMEOUT_MS) {
+            return false;
+        }
+        Sleep(50);
+    }
+
+    return true;
 }
 
 static bool write_disabled_flag(const wchar_t *path, bool disabled) {
@@ -471,7 +460,14 @@ static int run_toggle_mode(const wchar_t *install_directory, const wchar_t *disa
 
     if (running_count > 0) {
         write_disabled_flag(disabled_path, true);
-        terminate_guard_processes();
+        if (!request_guard_shutdown()) {
+            show_notification(
+                L"browser_guard",
+                L"Safe shutdown timed out. The guard was not force-terminated; try again or resume browsers manually.",
+                true
+            );
+            return 1;
+        }
         show_notification(L"browser_guard", L"Background protection has been turned off.", false);
         return 0;
     }

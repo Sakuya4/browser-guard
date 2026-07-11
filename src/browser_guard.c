@@ -546,7 +546,7 @@ static void ensure_group_state(
             entry = &tracked[*tracked_count];
             ZeroMemory(entry, sizeof(*entry));
             entry->pid = pid;
-            wcsncpy(entry->exe_name, group->exe_name, MAX_PATH - 1);
+            wcsncpy_s(entry->exe_name, MAX_PATH, group->exe_name, _TRUNCATE);
             entry->last_known_window = group->anchor_window;
             entry->last_known_window_was_maximized = window_restores_to_maximized(group->anchor_window);
             entry->last_active_tick = now_tick;

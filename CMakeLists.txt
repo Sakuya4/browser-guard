@@ -4,9 +4,23 @@ project(browser_guard C)
 
 include(CTest)
 
+option(BG_WARNINGS_AS_ERRORS "Treat browser_guard compiler warnings as errors" OFF)
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+
+if(MSVC)
+    add_compile_options(/W4 /utf-8)
+    if(BG_WARNINGS_AS_ERRORS)
+        add_compile_options(/WX)
+    endif()
+else()
+    add_compile_options(-Wall -Wextra -Wpedantic)
+    if(BG_WARNINGS_AS_ERRORS)
+        add_compile_options(-Werror)
+    endif()
+endif()
 
 add_executable(browser_guard WIN32
     src/main.c

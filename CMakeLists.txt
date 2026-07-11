@@ -79,4 +79,15 @@ if(BUILD_TESTING)
             -ControllerPath $<TARGET_FILE:browser_guard_control>
     )
     set_tests_properties(graceful_shutdown PROPERTIES TIMEOUT 15)
+
+    add_executable(browser_guard_recovery_journal_tests
+        tests/test_recovery_journal.c
+        src/process_identity.c
+        src/recovery_journal.c
+    )
+
+    target_include_directories(browser_guard_recovery_journal_tests PRIVATE include)
+    target_compile_definitions(browser_guard_recovery_journal_tests PRIVATE UNICODE _UNICODE)
+    target_link_libraries(browser_guard_recovery_journal_tests PRIVATE Advapi32)
+    add_test(NAME recovery_journal COMMAND browser_guard_recovery_journal_tests)
 endif()

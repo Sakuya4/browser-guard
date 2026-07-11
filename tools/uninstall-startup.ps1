@@ -18,6 +18,13 @@ $legacyPaths = @(
     (Join-Path $InstallDirectory "toggle-browser-guard.ps1")
 )
 
+if ((Test-Path -LiteralPath $installedExePath) -and (Test-Path -LiteralPath $installedControlExePath)) {
+    $controller = Start-Process -FilePath $installedControlExePath -ArgumentList "--shutdown" -PassThru -Wait -WindowStyle Hidden
+    if ($controller.ExitCode -ne 0) {
+        throw "browser_guard did not complete a safe shutdown. Refusing to uninstall while it may own suspended processes."
+    }
+}
+
 if (Test-Path $shortcutPath) {
     Remove-Item -LiteralPath $shortcutPath -Force
 }

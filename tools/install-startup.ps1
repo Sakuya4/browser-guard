@@ -2,7 +2,7 @@ param(
     [string]$ExecutablePath = "",
     [string]$ControlExecutablePath = "",
     [string]$InstallDirectory = "$env:LOCALAPPDATA\browser_guard",
-    [string]$Arguments = "--aggressive-memory --aggressive-suspend --trim-interval-ms 3000 --background-grace-ms 60000 --manual-resume-grace-ms 8000 --heartbeat-interval-ms 5000 --window-probe-timeout-ms 750",
+    [string]$Arguments = "--aggressive-memory --minimized-only --trim-interval-ms 3000 --background-grace-ms 60000 --manual-resume-grace-ms 8000 --heartbeat-interval-ms 5000 --window-probe-timeout-ms 750",
     [switch]$Overwrite
 )
 
@@ -22,6 +22,30 @@ function Stop-InstalledProcessIfRunning {
     foreach ($process in $matchingProcesses) {
         Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
         Wait-Process -Id $process.ProcessId -Timeout 5 -ErrorAction SilentlyContinue
+    }
+}
+
+function Request-InstalledGuardShutdown {
+    param(
+        [string]$GuardPath,
+        [string]$ControllerPath
+    )
+
+    $normalizedGuardPath = [System.IO.Path]::GetFullPath($GuardPath)
+    $runningGuard = Get-CimInstance Win32_Process -Filter "Name = 'browser_guard.exe'" | Where-Object {
+        $_.ExecutablePath -and ([System.IO.Path]::GetFullPath($_.ExecutablePath) -ieq $normalizedGuardPath)
+    }
+
+    if ($null -eq $runningGuard) {
+        return
+    }
+    if (-not (Test-Path -LiteralPath $ControllerPath)) {
+        throw "A running browser_guard was found, but its controller is missing. Refusing an unsafe forced upgrade."
+    }
+
+    $controller = Start-Process -FilePath $ControllerPath -ArgumentList "--shutdown" -PassThru -Wait -WindowStyle Hidden
+    if ($controller.ExitCode -ne 0) {
+        throw "browser_guard did not complete a safe shutdown. Refusing to overwrite the running executable."
     }
 }
 
@@ -90,7 +114,7 @@ if ((Test-Path $installedExePath) -and -not $Overwrite) {
 }
 
 if ($Overwrite) {
-    Stop-InstalledProcessIfRunning -ProcessName "browser_guard.exe" -ExpectedPath $installedExePath
+    Request-InstalledGuardShutdown -GuardPath $installedExePath -ControllerPath $installedControlExePath
     Stop-InstalledProcessIfRunning -ProcessName "browser_guard_control.exe" -ExpectedPath $installedControlExePath
 }
 

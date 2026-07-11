@@ -70,4 +70,13 @@ if(BUILD_TESTING)
     target_compile_definitions(browser_guard_process_identity_tests PRIVATE UNICODE _UNICODE)
     target_link_libraries(browser_guard_process_identity_tests PRIVATE Advapi32)
     add_test(NAME process_identity COMMAND browser_guard_process_identity_tests)
+
+    add_test(
+        NAME graceful_shutdown
+        COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+            -File ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_graceful_shutdown.ps1
+            -GuardPath $<TARGET_FILE:browser_guard>
+            -ControllerPath $<TARGET_FILE:browser_guard_control>
+    )
+    set_tests_properties(graceful_shutdown PROPERTIES TIMEOUT 15)
 endif()

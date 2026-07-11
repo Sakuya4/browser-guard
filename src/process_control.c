@@ -307,13 +307,14 @@ static BOOL CALLBACK enum_windows_callback(HWND hwnd, LPARAM lparam) {
     }
 
     if (IsIconic(hwnd)) {
-        group->is_minimized = true;
+        group->minimized_window_count += 1;
+    } else {
+        group->visible_restored_window_count += 1;
     }
 
     if (hwnd == context->foreground_window && !IsIconic(hwnd)) {
         group->has_foreground_window = true;
         group->anchor_window = GetAncestor(hwnd, GA_ROOT);
-        group->is_minimized = false;
     }
 
     return TRUE;

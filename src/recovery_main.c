@@ -11,7 +11,6 @@ static int run_recovery_broker(DWORD guard_pid, const wchar_t *journal_path, HAN
 
     guard_process = OpenProcess(SYNCHRONIZE, FALSE, guard_pid);
     if (guard_process == NULL) {
-        SetEvent(ready_event);
         return 1;
     }
 

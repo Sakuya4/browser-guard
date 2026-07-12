@@ -9,6 +9,7 @@ $desktopFolder = [Environment]::GetFolderPath("Desktop")
 $desktopShortcutPath = Join-Path $desktopFolder "browser_guard Toggle.lnk"
 $installedExePath = Join-Path $InstallDirectory "browser_guard.exe"
 $installedControlExePath = Join-Path $InstallDirectory "browser_guard_control.exe"
+$installedRecoveryExePath = Join-Path $InstallDirectory "browser_guard_recovery.exe"
 $installedArgsPath = Join-Path $InstallDirectory "browser_guard.args.txt"
 $disabledFlagPath = Join-Path $InstallDirectory "browser_guard.disabled"
 $legacyPaths = @(
@@ -17,6 +18,24 @@ $legacyPaths = @(
     (Join-Path $InstallDirectory "toggle-browser-guard.bat"),
     (Join-Path $InstallDirectory "toggle-browser-guard.ps1")
 )
+
+if ((Test-Path -LiteralPath $installedExePath) -and (Test-Path -LiteralPath $installedControlExePath)) {
+    $controller = Start-Process -FilePath $installedControlExePath -ArgumentList "--shutdown" -PassThru -Wait -WindowStyle Hidden
+    if ($controller.ExitCode -ne 0) {
+        throw "browser_guard did not complete a safe shutdown. Refusing to uninstall while it may own suspended processes."
+    }
+}
+
+$normalizedRecoveryPath = [System.IO.Path]::GetFullPath($installedRecoveryExePath)
+$recoveryProcesses = Get-CimInstance Win32_Process -Filter "Name = 'browser_guard_recovery.exe'" | Where-Object {
+    $_.ExecutablePath -and ([System.IO.Path]::GetFullPath($_.ExecutablePath) -ieq $normalizedRecoveryPath)
+}
+foreach ($process in $recoveryProcesses) {
+    Wait-Process -Id $process.ProcessId -Timeout 5 -ErrorAction SilentlyContinue
+    if (Get-Process -Id $process.ProcessId -ErrorAction SilentlyContinue) {
+        throw "Recovery broker did not finish within 5 seconds. Refusing to remove recovery components."
+    }
+}
 
 if (Test-Path $shortcutPath) {
     Remove-Item -LiteralPath $shortcutPath -Force
@@ -32,6 +51,10 @@ if (Test-Path $installedExePath) {
 
 if (Test-Path $installedControlExePath) {
     Remove-Item -LiteralPath $installedControlExePath -Force
+}
+
+if (Test-Path $installedRecoveryExePath) {
+    Remove-Item -LiteralPath $installedRecoveryExePath -Force
 }
 
 if (Test-Path $installedArgsPath) {

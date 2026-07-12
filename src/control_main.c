@@ -7,6 +7,9 @@
 #include <tlhelp32.h>
 #include <wchar.h>
 
+#include "control_protocol.h"
+#include "process_identity.h"
+
 #define BG_CONTROL_CLASS_NAME L"BrowserGuardControlWindow"
 #define BG_NOTIFICATION_CLASS_NAME L"BrowserGuardControlNotification"
 #define BG_INSTALLED_EXE_NAME L"browser_guard.exe"
@@ -17,6 +20,7 @@
 #define BG_NOTIFICATION_HEIGHT 108
 #define BG_NOTIFICATION_MARGIN 16
 #define BG_NOTIFICATION_TITLE_HEIGHT 28
+#define BG_GRACEFUL_SHUTDOWN_TIMEOUT_MS 5000
 
 typedef struct NotificationWindowData {
     const wchar_t *title;
@@ -29,7 +33,8 @@ typedef struct NotificationWindowData {
 
 typedef enum ControlMode {
     CONTROL_MODE_TOGGLE,
-    CONTROL_MODE_LAUNCH
+    CONTROL_MODE_LAUNCH,
+    CONTROL_MODE_SHUTDOWN
 } ControlMode;
 
 static LRESULT CALLBACK control_window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -169,7 +174,7 @@ static bool build_path(wchar_t *buffer, size_t buffer_count, const wchar_t *dire
     return SUCCEEDED(StringCchPrintfW(buffer, buffer_count, L"%ls\\%ls", directory, file_name));
 }
 
-static unsigned int count_guard_processes(void) {
+static unsigned int count_guard_processes(const wchar_t *expected_path) {
     unsigned int count = 0;
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     PROCESSENTRY32W entry;
@@ -183,7 +188,8 @@ static unsigned int count_guard_processes(void) {
 
     if (Process32FirstW(snapshot, &entry)) {
         do {
-            if (_wcsicmp(entry.szExeFile, BG_INSTALLED_EXE_NAME) == 0) {
+            if (_wcsicmp(entry.szExeFile, BG_INSTALLED_EXE_NAME) == 0 &&
+                bg_process_matches_current_identity(entry.th32ProcessID, expected_path)) {
                 count += 1;
             }
         } while (Process32NextW(snapshot, &entry));
@@ -193,43 +199,29 @@ static unsigned int count_guard_processes(void) {
     return count;
 }
 
-static bool terminate_guard_processes(void) {
-    bool success = true;
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    PROCESSENTRY32W entry;
+static bool request_guard_shutdown(const wchar_t *expected_path) {
+    HANDLE shutdown_event = bg_open_shutdown_event();
+    DWORD start_tick = GetTickCount();
 
-    if (snapshot == INVALID_HANDLE_VALUE) {
+    if (shutdown_event == NULL) {
         return false;
     }
 
-    ZeroMemory(&entry, sizeof(entry));
-    entry.dwSize = sizeof(entry);
-
-    if (Process32FirstW(snapshot, &entry)) {
-        do {
-            if (_wcsicmp(entry.szExeFile, BG_INSTALLED_EXE_NAME) != 0) {
-                continue;
-            }
-
-            HANDLE process = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, entry.th32ProcessID);
-            if (process == NULL) {
-                success = false;
-                continue;
-            }
-
-            if (!TerminateProcess(process, 0)) {
-                success = false;
-                CloseHandle(process);
-                continue;
-            }
-
-            WaitForSingleObject(process, 2000);
-            CloseHandle(process);
-        } while (Process32NextW(snapshot, &entry));
+    if (!SetEvent(shutdown_event)) {
+        CloseHandle(shutdown_event);
+        return false;
     }
 
-    CloseHandle(snapshot);
-    return success;
+    CloseHandle(shutdown_event);
+
+    while (count_guard_processes(expected_path) > 0) {
+        if ((DWORD)(GetTickCount() - start_tick) >= BG_GRACEFUL_SHUTDOWN_TIMEOUT_MS) {
+            return false;
+        }
+        Sleep(50);
+    }
+
+    return true;
 }
 
 static bool write_disabled_flag(const wchar_t *path, bool disabled) {
@@ -451,6 +443,10 @@ static ControlMode parse_mode(void) {
                 mode = CONTROL_MODE_LAUNCH;
                 break;
             }
+            if (_wcsicmp(argv[i], L"--shutdown") == 0) {
+                mode = CONTROL_MODE_SHUTDOWN;
+                break;
+            }
         }
         LocalFree(argv);
     }
@@ -458,20 +454,35 @@ static ControlMode parse_mode(void) {
     return mode;
 }
 
-static int run_launch_mode(const wchar_t *install_directory, const wchar_t *disabled_path) {
-    if (is_disabled(disabled_path) || count_guard_processes() > 0) {
+static int run_launch_mode(
+    const wchar_t *install_directory,
+    const wchar_t *disabled_path,
+    const wchar_t *guard_path
+) {
+    if (is_disabled(disabled_path) || count_guard_processes(guard_path) > 0) {
         return 0;
     }
 
     return start_guard_process(install_directory) ? 0 : 1;
 }
 
-static int run_toggle_mode(const wchar_t *install_directory, const wchar_t *disabled_path) {
-    unsigned int running_count = count_guard_processes();
+static int run_toggle_mode(
+    const wchar_t *install_directory,
+    const wchar_t *disabled_path,
+    const wchar_t *guard_path
+) {
+    unsigned int running_count = count_guard_processes(guard_path);
 
     if (running_count > 0) {
         write_disabled_flag(disabled_path, true);
-        terminate_guard_processes();
+        if (!request_guard_shutdown(guard_path)) {
+            show_notification(
+                L"browser_guard",
+                L"Safe shutdown timed out. The guard was not force-terminated; try again or resume browsers manually.",
+                true
+            );
+            return 1;
+        }
         show_notification(L"browser_guard", L"Background protection has been turned off.", false);
         return 0;
     }
@@ -486,9 +497,18 @@ static int run_toggle_mode(const wchar_t *install_directory, const wchar_t *disa
     return 0;
 }
 
+static int run_shutdown_mode(const wchar_t *guard_path) {
+    if (count_guard_processes(guard_path) == 0) {
+        return 0;
+    }
+
+    return request_guard_shutdown(guard_path) ? 0 : 1;
+}
+
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous_instance, PWSTR command_line, int show_command) {
     wchar_t install_directory[MAX_PATH];
     wchar_t disabled_path[MAX_PATH];
+    wchar_t guard_path[MAX_PATH];
     ControlMode mode;
 
     (void)instance;
@@ -502,11 +522,17 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous_instance, PWSTR comma
     if (!build_path(disabled_path, MAX_PATH, install_directory, BG_DISABLED_FILE_NAME)) {
         return 1;
     }
+    if (!build_path(guard_path, MAX_PATH, install_directory, BG_INSTALLED_EXE_NAME)) {
+        return 1;
+    }
 
     mode = parse_mode();
     if (mode == CONTROL_MODE_LAUNCH) {
-        return run_launch_mode(install_directory, disabled_path);
+        return run_launch_mode(install_directory, disabled_path, guard_path);
+    }
+    if (mode == CONTROL_MODE_SHUTDOWN) {
+        return run_shutdown_mode(guard_path);
     }
 
-    return run_toggle_mode(install_directory, disabled_path);
+    return run_toggle_mode(install_directory, disabled_path, guard_path);
 }

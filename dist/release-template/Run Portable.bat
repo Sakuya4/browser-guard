@@ -1,3 +1,3 @@
 @echo off
 setlocal
-start "" "%~dp0browser_guard.exe" --aggressive-memory --trim-interval-ms 3000
+start "" "%~dp0browser_guard.exe" --aggressive-memory --minimized-only --trim-interval-ms 3000

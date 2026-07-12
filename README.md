@@ -161,8 +161,6 @@ GitHub Actions builds Debug and Release on `windows-2022` with MSVC `/W4 /WX`, t
 
 - [Architecture](docs/architecture.md)
 - [Safety Model](docs/safety.md)
-- [English project demo](docs/project-demo.md)
-- [繁體中文專案講稿](docs/project-demo.zh-TW.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)
 - [Changelog](CHANGELOG.md)

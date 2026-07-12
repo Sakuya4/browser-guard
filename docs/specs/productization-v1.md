@@ -6,7 +6,7 @@ Approved by the project owner on 2026-07-12.
 
 ## Objective
 
-Turn `browser_guard` from a Windows API prototype into a trustworthy, project-ready open-source product that demonstrates practical C engineering.
+Turn `browser_guard` from a Windows API prototype into a trustworthy, production-oriented open-source product that demonstrates practical C engineering.
 
 The primary user is a Windows 10/11 user who temporarily needs more resident memory for games, builds, EDA workloads, or local model inference. The product must prefer preserving browser work over reclaiming memory.
 
@@ -21,7 +21,7 @@ The v1 portfolio release should demonstrate:
 - testable policy logic separated from Windows side effects;
 - repeatable measurements that include costs as well as benefits;
 - automated Windows builds and tests;
-- documentation suitable for users, contributors, and project discussion.
+- documentation suitable for users and contributors.
 
 ## Scope
 
@@ -60,7 +60,6 @@ The v1 portfolio release should demonstrate:
 - Redesign the benchmark to run repeated alternating baseline/guarded trials and report sample count, mean, spread, working set, private bytes, CPU time, page faults, and resume latency.
 - Remove misleading headline percentages from the README unless paired with absolute values and test conditions.
 - Add architecture, safety model, limitations, contributing guide, changelog, and ADRs.
-- Add a concise project demo script covering the problem, design, failure modes, trade-offs, tests, and measured results.
 
 ## Explicit Non-goals for v1
 
@@ -128,7 +127,6 @@ docs/specs/              Product and feature specifications
 docs/decisions/          Architecture decision records
 docs/architecture.md     Components, protocols, and trust boundaries
 docs/safety.md           Safety guarantees, limitations, and recovery behavior
-docs/project-demo.md   Repeatable project presentation and demonstration
 .github/workflows/       Windows CI quality gates
 ```
 
@@ -226,7 +224,7 @@ Tests must avoid suspending the developer's real browser. Integration tests use 
 7. Benchmark output includes repeated trials, absolute values, variance/spread, resume latency, and page-fault cost; results are reproducible from documented commands.
 8. README quick start contains only repository-relative links and clearly separates guarantees, experimental behavior, and limitations.
 9. Architecture and safety ADRs explain why graceful IPC, identity validation, a recovery broker, and pure policy extraction were chosen.
-10. An reviewer can follow `docs/project-demo.md` to understand and demonstrate the project in 10–15 minutes.
+10. A new contributor can understand the architecture, safety model, tests, and measured trade-offs from the repository documentation.
 
 ## Delivery Order
 
@@ -237,7 +235,7 @@ Tests must avoid suspending the developer's real browser. Integration tests use 
 5. Add broker protocol and crash-recovery integration test.
 6. Add structured decision reasons and improve observability.
 7. Redesign benchmark and replace sample claims.
-8. Complete CI, open-source documentation, ADRs, and project demo.
+8. Complete CI, open-source documentation, and ADRs.
 9. Run full clean build/test/manual verification and prepare a release checklist.
 
 ## Risks and Mitigations
@@ -254,4 +252,3 @@ Tests must avoid suspending the developer's real browser. Integration tests use 
 1. Should v1 include the crash-recovery broker, or should it be a documented v1.1 milestone after safe shutdown, tests, and CI?
 2. Is Windows 10 x64 still a required target, or may the project target Windows 11 only?
 3. Should the existing CLI option names remain fully backward compatible?
-4. Is a 10–15 minute English project demo the desired deliverable, or should the project include both English and Traditional Chinese presentation material?

@@ -9,7 +9,7 @@ All notable changes follow the spirit of [Keep a Changelog](https://keepachangel
 - Independent crash-recovery broker with an identity-validated recovery journal.
 - CTest unit and Windows integration tests.
 - Strict Windows Debug/Release CI using MSVC `/W4 /WX`.
-- Architecture, safety, ADR, contribution, security, and project documentation.
+- Architecture, safety, ADR, contribution, and security documentation.
 - Counterbalanced benchmark with CPU, page-fault, and recovery-latency measurements.
 - Explainable suspension decisions for foreground, audio, grace periods, and window state.
 

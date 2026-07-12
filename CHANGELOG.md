@@ -11,6 +11,7 @@ All notable changes follow the spirit of [Keep a Changelog](https://keepachangel
 - Strict Windows Debug/Release CI using MSVC `/W4 /WX`.
 - Architecture, safety, ADR, contribution, security, and interview documentation.
 - Counterbalanced benchmark with CPU, page-fault, and recovery-latency measurements.
+- Explainable suspension decisions for foreground, audio, grace periods, and window state.
 
 ### Changed
 

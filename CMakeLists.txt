@@ -74,6 +74,13 @@ target_link_libraries(browser_guard_recovery PRIVATE
 )
 
 if(BUILD_TESTING)
+    add_executable(browser_guard_config_tests
+        tests/test_app_config.c
+        src/app_config.c
+    )
+    target_include_directories(browser_guard_config_tests PRIVATE include)
+    add_test(NAME app_config COMMAND browser_guard_config_tests)
+
     add_executable(browser_guard_policy_tests
         tests/test_suspend_policy.c
         src/suspend_policy.c

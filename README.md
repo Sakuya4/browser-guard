@@ -138,6 +138,7 @@ Read [Safety Model](docs/safety.md) before enabling aggressive suspension.
 
 CTest covers:
 
+- conservative defaults, explicit aggressive opt-in, and invalid arguments;
 - mixed multi-window suspension policy;
 - per-user/session shutdown event behavior;
 - path, user, and session process identity;
@@ -150,7 +151,7 @@ GitHub Actions builds Debug and Release on `windows-2022` with MSVC `/W4 /WX`, t
 ## Roadmap
 
 - replace the legacy periodic resume/probe heartbeat with handle-based liveness monitoring;
-- add explainable policy reason telemetry locally, without network collection;
+- surface existing local policy reason codes in a future tray UI, without network collection;
 - restore background memory/power policy metadata during broker recovery;
 - expand Windows 10/11 and browser-version manual test matrices;
 - investigate an optional browser-extension/native-messaging layer for tab-level semantics;
